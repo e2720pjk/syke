@@ -22,7 +22,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from syke.observe.catalog import active_sources
+from syke.observe.catalog import active_sources, is_excluded_discovered_path
 from syke.pi_state import get_pi_agent_dir
 from syke.runtime.child_env import child_temp_paths
 
@@ -89,9 +89,12 @@ def _harness_read_paths(selected_sources: tuple[str, ...] | None = None) -> list
             continue
         for root in spec.discover.roots:
             try:
-                expanded = str(Path(root.path).expanduser().resolve())
+                expanded_path = Path(root.path).expanduser().resolve()
             except OSError:
                 continue
+            if is_excluded_discovered_path(spec, expanded_path):
+                continue
+            expanded = str(expanded_path)
             if expanded not in seen:
                 seen.add(expanded)
                 paths.append(expanded)

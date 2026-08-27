@@ -19,7 +19,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from syke.pi_state import build_pi_agent_env, get_default_model
 from syke.runtime.child_env import (
@@ -30,7 +30,16 @@ from syke.runtime.pi_settings import configure_pi_workspace
 
 logger = logging.getLogger(__name__)
 
-_PI_THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh"})
+
+class PiUsage(TypedDict):
+    input_tokens: int | None
+    output_tokens: int | None
+    cache_read_tokens: int | None
+    cache_write_tokens: int | None
+    cost_usd: float | None
+
+
+_PI_THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh", "max"})
 # Give Pi time to emit retry state after a retryable agent_end. Generous
 # enough to absorb network jitter on slow runners; the cost is at most this
 # much extra wall-time for cycles that hit a *terminal* retryable error
@@ -141,6 +150,20 @@ def _match_pi_model_pattern(
     return f"{resolved}:{thinking}" if thinking else resolved
 
 
+def resolve_pi_model_pattern(
+    provider_name: str,
+    requested: str,
+    model_ids: tuple[str, ...],
+) -> str | None:
+    """Resolve a Pi model ID or alias while preserving ``:thinking`` suffixes.
+
+    Keep this matcher shared by runtime launch validation and CLI activation so
+    a model selected from Pi's catalog is not rejected by a second, stricter
+    Python-side check.
+    """
+    return _match_pi_model_pattern(provider_name, requested, model_ids)
+
+
 def _format_model_examples(model_ids: tuple[str, ...]) -> str:
     examples = sorted(model_ids)[:3]
     return ", ".join(repr(model_id) for model_id in examples)
@@ -177,7 +200,7 @@ def _benchmark_judge_rpc_script() -> str:
     # been updated to use the rubric engine.
     return """
 import { readFileSync } from "node:fs";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import {
   createAgentSessionFromServices,
   createAgentSessionRuntime,
@@ -185,7 +208,7 @@ import {
   defineTool,
   runRpcMode,
   SessionManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 const cwd = process.env.SYKE_RPC_CWD || process.cwd();
 const agentDir = process.env.PI_CODING_AGENT_DIR;
@@ -193,7 +216,7 @@ const sessionDir = process.env.SYKE_RPC_SESSION_DIR || undefined;
 const provider = process.env.SYKE_RPC_PROVIDER || undefined;
 const modelSpec = process.env.SYKE_RPC_MODEL || undefined;
 const rubricSpecPath = process.env.SYKE_RPC_RUBRIC_SPEC_PATH || undefined;
-const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 function splitModelSpec(spec) {
   if (!spec) return { modelId: undefined, thinkingLevel: undefined };
@@ -319,10 +342,10 @@ const verdictTool = defineTool({
 const createRuntime = async ({ cwd, sessionManager, sessionStartEvent }) => {
   const services = await createAgentSessionServices({ cwd, agentDir });
   const selectedModel = provider && modelId
-    ? services.modelRegistry.find(provider, modelId)
+    ? services.modelRuntime.getModel(provider, modelId)
     : undefined;
   if (provider && modelId && !selectedModel) {
-    throw new Error(`Model not found in registry: ${provider}/${modelId}`);
+    throw new Error(`Model not found in runtime: ${provider}/${modelId}`);
   }
   return {
     ...(await createAgentSessionFromServices({
@@ -391,22 +414,33 @@ def _load_pi_catalog() -> tuple[PiProviderCatalogEntry, ...]:
         return ()
 
     script = """
-import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
-import { getOAuthProviders } from "@mariozechner/pi-ai/oauth";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { defaultModelPerProvider } from
-  "./node_modules/@mariozechner/pi-coding-agent/dist/core/model-resolver.js";
+  "./node_modules/@earendil-works/pi-coding-agent/dist/core/model-resolver.js";
 
-const authStorage = AuthStorage.create();
-const modelRegistry = ModelRegistry.create(authStorage);
-const allModels = modelRegistry.getAll();
-const availableModels = modelRegistry.getAvailable();
-const oauthProviders = getOAuthProviders();
-const oauthById = new Map(oauthProviders.map((provider) => [provider.id, provider]));
+const agentDir = process.env.PI_CODING_AGENT_DIR;
+const runtime = await ModelRuntime.create({
+  authPath: agentDir ? `${agentDir}/auth.json` : undefined,
+  modelsPath: agentDir ? `${agentDir}/models.json` : undefined,
+  modelsStorePath: agentDir ? `${agentDir}/models-store.json` : undefined,
+  allowModelNetwork: false,
+  refreshOnCreate: false,
+});
+const allModels = runtime.getModels();
 const availableByProvider = new Map();
-for (const model of availableModels) {
-  const current = availableByProvider.get(model.provider) ?? [];
-  current.push(model.id);
-  availableByProvider.set(model.provider, current);
+for (const provider of runtime.getProviders()) {
+  try {
+    if (await runtime.checkAuth(provider.id)) {
+      // Ask Pi for its filtered availability rather than treating every
+      // catalog model as usable. This preserves provider-specific model
+      // policy while still exposing the complete static catalog below.
+      const available = await runtime.getAvailable(provider.id);
+      availableByProvider.set(provider.id, available.map((model) => model.id));
+    }
+  } catch (error) {
+    void error;
+    // A provider with broken auth remains visible but is not ready.
+  }
 }
 const grouped = new Map();
 for (const model of allModels) {
@@ -414,6 +448,7 @@ for (const model of allModels) {
   current.push(model.id);
   grouped.set(model.provider, current);
 }
+const providersById = new Map(runtime.getProviders().map((provider) => [provider.id, provider]));
 const payload = Array.from(grouped.entries())
   .sort((a, b) => a[0].localeCompare(b[0]))
   .map(([provider, modelIds]) => {
@@ -421,7 +456,8 @@ const payload = Array.from(grouped.entries())
     const providerModels = allModels.filter((model) => model.provider === provider);
     const preferred = defaultModelPerProvider[provider];
     const defaultModel = preferred && ids.includes(preferred) ? preferred : (ids[0] ?? null);
-    const oauth = oauthById.get(provider);
+    const auth = providersById.get(provider)?.auth;
+    const oauth = auth?.oauth;
     return {
       id: provider,
       models: ids,
@@ -445,7 +481,7 @@ process.stdout.write(JSON.stringify(payload));
 
     try:
         raw = json.loads(result.stdout)
-    except json.JSONDecodeError:
+    except ValueError:
         return ()
 
     if not isinstance(raw, list):
@@ -493,39 +529,47 @@ def run_pi_oauth_login(provider_id: str, *, manual: bool = False) -> None:
     script = """
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { AuthStorage } from "@mariozechner/pi-coding-agent";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 const provider = process.env.SYKE_PI_LOGIN_PROVIDER;
 const manual = process.env.SYKE_PI_LOGIN_MANUAL === "1";
+const agentDir = process.env.PI_CODING_AGENT_DIR;
 if (!provider) {
   throw new Error("Missing SYKE_PI_LOGIN_PROVIDER");
 }
 
-const authStorage = AuthStorage.create();
+const runtime = await ModelRuntime.create({
+  authPath: agentDir ? `${agentDir}/auth.json` : undefined,
+  modelsPath: agentDir ? `${agentDir}/models.json` : undefined,
+  modelsStorePath: agentDir ? `${agentDir}/models-store.json` : undefined,
+  allowModelNetwork: false,
+  refreshOnCreate: false,
+});
 const rl = readline.createInterface({ input: stdin, output: stdout });
 
 try {
-  const callbacks = {
-    onAuth: (info) => {
-      console.log(`Open this URL to continue: ${info.url}`);
-      if (info.instructions) console.log(info.instructions);
-    },
-    onPrompt: async (prompt) => {
+  await runtime.login(provider, "oauth", {
+    prompt: async (prompt) => {
+      if (prompt.type === "select") {
+        const preferred = manual ? "device_code" : "browser";
+        return prompt.options.some((option) => option.id === preferred)
+          ? preferred
+          : prompt.options[0]?.id;
+      }
       const placeholder = prompt.placeholder ? ` (${prompt.placeholder})` : "";
       return await rl.question(`${prompt.message}${placeholder}: `);
     },
-    onProgress: (message) => {
-      console.log(message);
-    }
-  };
-
-  if (manual) {
-    callbacks.onManualCodeInput = async () => {
-      return await rl.question("Paste the final redirect URL or authorization code: ");
-    };
-  }
-
-  await authStorage.login(provider, callbacks);
+    notify: (event) => {
+      if (event.type === "auth_url") {
+        console.log(`Open this URL to continue: ${event.url}`);
+        if (event.instructions) console.log(event.instructions);
+      } else if (event.type === "device_code") {
+        console.log(`Open ${event.verificationUri} and enter code ${event.userCode}`);
+      } else {
+        console.log(event.message);
+      }
+    },
+  });
 } finally {
   rl.close();
 }
@@ -576,8 +620,10 @@ def probe_pi_provider_connection(
             env=_build_pi_process_env(provider=provider_id),
             check=False,
         )
-    except subprocess.TimeoutExpired:
-        return False, f"probe timed out after {timeout_seconds}s"
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        if isinstance(exc, subprocess.TimeoutExpired):
+            return False, f"probe timed out after {timeout_seconds}s"
+        return False, f"probe failed: {exc}"
     stdout = result.stdout.strip()
     stderr = result.stderr.strip()
     if result.returncode == 0 and stdout:
@@ -644,11 +690,12 @@ def resolve_pi_provider(model_override: str | None = None) -> str | None:
     return resolve_pi_launch_binding(model_override).provider
 
 
-PI_PACKAGE = "@mariozechner/pi-coding-agent"
+PI_PACKAGE = "@earendil-works/pi-coding-agent"
+PI_PACKAGE_VERSION = "0.84.1"
 PI_LOCAL_PREFIX = Path.home() / ".syke" / "pi"
 PI_BIN = Path.home() / ".syke" / "bin" / "pi"
 PI_NODE_BIN = Path.home() / ".syke" / "bin" / "node"
-PI_PACKAGE_ROOT = PI_LOCAL_PREFIX / "node_modules" / "@mariozechner" / "pi-coding-agent"
+PI_PACKAGE_ROOT = PI_LOCAL_PREFIX / "node_modules" / "@earendil-works" / "pi-coding-agent"
 PI_CLI_JS = PI_PACKAGE_ROOT / "dist" / "cli.js"
 
 _NODE_CANDIDATES = [
@@ -661,19 +708,46 @@ _NPM_CANDIDATES = [
     Path("/usr/local/bin/npm"),
     Path("/usr/bin/npm"),
 ]
-_NODE_REQUIREMENT = "Node.js 20+ with RegExp 'v' flag support (22 LTS recommended)"
+_NODE_REQUIREMENT = "Node.js 22.19+ with RegExp 'v' flag support"
+
+
+def _is_executable(path: Path) -> bool:
+    try:
+        return path.exists() and os.access(path, os.X_OK)
+    except OSError:
+        return False
+
+
+def _installed_pi_package_version() -> str | None:
+    """Read the managed Pi package version, if its manifest is present."""
+    manifest = PI_PACKAGE_ROOT / "package.json"
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    version = payload.get("version") if isinstance(payload, dict) else None
+    return version if isinstance(version, str) and version else None
 
 
 def _find_executable(name: str, candidates: list[Path]) -> Path | None:
-    resolved = shutil.which(name)
+    try:
+        resolved = shutil.which(name)
+    except OSError:
+        resolved = None
     if resolved:
-        path = Path(resolved).expanduser().resolve()
-        if path.exists() and os.access(path, os.X_OK):
+        try:
+            path = Path(resolved).expanduser().resolve()
+        except OSError:
+            path = None
+        if path is not None and _is_executable(path):
             return path
 
     for candidate in candidates:
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return candidate.resolve()
+        if _is_executable(candidate):
+            try:
+                return candidate.resolve()
+            except OSError:
+                continue
     return None
 
 
@@ -688,8 +762,11 @@ def _ensure_symlink(link_path: Path, target_path: Path) -> Path:
             pass
         link_path.unlink()
     elif link_path.exists():
-        if link_path.resolve() == target_path.resolve() and os.access(link_path, os.X_OK):
-            return link_path
+        try:
+            if link_path.resolve() == target_path.resolve() and _is_executable(link_path):
+                return link_path
+        except OSError:
+            pass
         link_path.unlink()
 
     link_path.symlink_to(target_path)
@@ -705,13 +782,24 @@ def _node_version_text(node: Path) -> str:
             timeout=5,
             check=False,
         )
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return "unknown version"
     version = (result.stdout or result.stderr).strip()
     return version or "unknown version"
 
 
 def _node_supports_pi_runtime(node: Path) -> tuple[bool, str]:
+    version_text = _node_version_text(node)
+    match = re.search(r"v?(\d+)\.(\d+)\.(\d+)", version_text)
+    if match is None:
+        return False, f"{version_text}: unable to determine Node.js version"
+    try:
+        version = tuple(int(part) for part in match.groups())
+    except ValueError:
+        return False, f"{version_text}: unable to determine Node.js version"
+    if version < (22, 19, 0):
+        return False, version_text
+
     try:
         result = subprocess.run(
             [str(node), "-e", "new RegExp('', 'v');"],
@@ -720,12 +808,12 @@ def _node_supports_pi_runtime(node: Path) -> tuple[bool, str]:
             timeout=5,
             check=False,
         )
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         return False, str(exc)
     if result.returncode == 0:
-        return True, _node_version_text(node)
+        return True, version_text
     detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
-    return False, f"{_node_version_text(node)}: {detail[:300]}"
+    return False, f"{version_text}: {detail[:300]}"
 
 
 def _require_supported_node(node: Path) -> Path:
@@ -737,7 +825,7 @@ def _require_supported_node(node: Path) -> Path:
 
 def ensure_node_binary() -> Path:
     """Return a stable absolute Node path Syke can use outside shell-managed PATH."""
-    if PI_NODE_BIN.exists() and os.access(PI_NODE_BIN, os.X_OK):
+    if _is_executable(PI_NODE_BIN):
         supported, detail = _node_supports_pi_runtime(PI_NODE_BIN)
         if supported:
             return PI_NODE_BIN
@@ -784,11 +872,13 @@ def ensure_pi_binary() -> str:
     """Install Pi locally under ~/.syke/ and return a stable launcher path."""
     node_bin = ensure_node_binary()
 
-    if PI_BIN.exists() and os.access(PI_BIN, os.X_OK) and PI_CLI_JS.exists():
+    installed_version = _installed_pi_package_version()
+    runtime_is_current = installed_version in {None, PI_PACKAGE_VERSION}
+    if _is_executable(PI_BIN) and PI_CLI_JS.exists() and runtime_is_current:
         _write_pi_launcher(node_bin)
         return str(PI_BIN)
 
-    if PI_CLI_JS.exists():
+    if PI_CLI_JS.exists() and runtime_is_current:
         _write_pi_launcher(node_bin)
         return str(PI_BIN)
 
@@ -798,7 +888,13 @@ def ensure_pi_binary() -> str:
     PI_LOCAL_PREFIX.mkdir(parents=True, exist_ok=True)
 
     result = subprocess.run(
-        [npm, "install", "--prefix", str(PI_LOCAL_PREFIX), PI_PACKAGE],
+        [
+            npm,
+            "install",
+            "--prefix",
+            str(PI_LOCAL_PREFIX),
+            f"{PI_PACKAGE}@{PI_PACKAGE_VERSION}",
+        ],
         capture_output=True,
         text=True,
         timeout=120,
@@ -939,6 +1035,30 @@ def _extract_usage_int(usage: dict[str, Any], *keys: str) -> int | None:
         if isinstance(value, int):
             return value
     return None
+
+
+def _extract_usage_float(value: Any) -> float | None:
+    if not isinstance(value, (int, float)):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _duration_ms(start: float, end: float) -> int:
+    try:
+        return int((end - start) * 1000)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _is_explicit_true(value: Any) -> bool:
+    return isinstance(value, bool) and value
+
+
+def _is_explicit_false(value: Any) -> bool:
+    return isinstance(value, bool) and not value
 
 
 def _is_retryable_pi_error(error_message: str) -> bool:
@@ -1145,7 +1265,7 @@ class RpcEventStream:
                     continue
                 try:
                     event = json.loads(line)
-                except json.JSONDecodeError:
+                except ValueError:
                     logger.debug("Non-JSON line from Pi: %s", line[:200])
                     continue
 
@@ -1161,7 +1281,7 @@ class RpcEventStream:
                         self._done.set()
                     elif event_type == "error":
                         self._error = event.get("message", "Unknown Pi error")
-                    elif event_type == "response" and event.get("success") is False:
+                    elif event_type == "response" and _is_explicit_false(event.get("success")):
                         self._error = event.get("error", "Pi command failed")
 
                 if callback is not None:
@@ -1279,7 +1399,7 @@ class RpcEventStream:
                 invocations.append(invocation)
         return _dedupe_tool_invocations(invocations)
 
-    def get_usage(self) -> dict[str, int | float | None]:
+    def get_usage(self) -> PiUsage:
         latest_message: dict[str, Any] | None = None
         for event in self.events:
             message = _extract_assistant_message(event)
@@ -1298,16 +1418,21 @@ class RpcEventStream:
         usage = latest_message.get("usage")
         if not isinstance(usage, dict):
             usage = {}
-        cost = latest_message.get("cost")
-        if not isinstance(cost, dict):
-            cost = usage.get("cost") if isinstance(usage.get("cost"), dict) else {}
+        cost: dict[str, Any] = {}
+        raw_cost = latest_message.get("cost")
+        if isinstance(raw_cost, dict):
+            cost = raw_cost
+        else:
+            usage_cost = usage.get("cost")
+            if isinstance(usage_cost, dict):
+                cost = usage_cost
 
         return {
             "input_tokens": _extract_usage_int(usage, "input_tokens", "input"),
             "output_tokens": _extract_usage_int(usage, "output_tokens", "output"),
             "cache_read_tokens": _extract_usage_int(usage, "cache_read_tokens", "cacheRead"),
             "cache_write_tokens": _extract_usage_int(usage, "cache_write_tokens", "cacheWrite"),
-            "cost_usd": cost.get("total") if isinstance(cost.get("total"), (int, float)) else None,
+            "cost_usd": _extract_usage_float(cost.get("total")),
         }
 
     def get_assistant_error(self) -> str | None:
@@ -1364,7 +1489,7 @@ class RpcEventStream:
                 last_retry_end = event
         if last_retry_end is None:
             return None
-        if last_retry_end.get("success") is True:
+        if _is_explicit_true(last_retry_end.get("success")):
             return None
         final_error = last_retry_end.get("finalError")
         if isinstance(final_error, str) and final_error:
@@ -1580,7 +1705,7 @@ class PiRuntime:
             self._cleanup_sandbox_profile()
             raise
 
-        self._last_start_duration_ms = int((time.monotonic() - started) * 1000)
+        self._last_start_duration_ms = _duration_ms(started, time.monotonic())
         self._start_count += 1
         logger.debug("Pi runtime started (pid=%s)", self._process.pid)
 
@@ -1607,14 +1732,14 @@ class PiRuntime:
         if process.poll() is None:
             try:
                 process.wait(timeout=_RPC_STOP_STDIN_GRACE_SECONDS)
-            except subprocess.TimeoutExpired:
+            except (subprocess.TimeoutExpired, TimeoutError):
                 pass
 
         if process.poll() is None:
             try:
                 process.terminate()
                 process.wait(timeout=_RPC_STOP_TERM_GRACE_SECONDS)
-            except subprocess.TimeoutExpired:
+            except (subprocess.TimeoutExpired, TimeoutError):
                 logger.warning("Pi did not quit gracefully, killing")
                 process.kill()
                 process.wait()
@@ -1691,7 +1816,7 @@ class PiRuntime:
                 completed = wait_for_terminal_state(timeout=timeout)
             else:
                 completed = self._stream.wait(timeout=timeout)
-            duration_ms = int((time.time() - start) * 1000)
+            duration_ms = _duration_ms(start, time.time())
 
             events = self._stream.events
             usage = self._stream.get_usage()
@@ -1797,7 +1922,7 @@ class PiRuntime:
             for event in events[scanned:]:
                 if event.get("type") != "response" or event.get("id") != request_id:
                     continue
-                if event.get("success") is False:
+                if _is_explicit_false(event.get("success")):
                     error = event.get("error") or f"Pi request failed: {command.get('type')}"
                     raise RuntimeError(str(error))
                 data = event.get("data")

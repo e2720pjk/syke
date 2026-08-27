@@ -1,3 +1,5 @@
+# pyright: reportMissingImports=false, reportArgumentType=false, reportAttributeAccessIssue=false, reportOptionalSubscript=false, reportIndexIssue=false
+
 from __future__ import annotations
 
 import io
@@ -388,7 +390,7 @@ def test_first_run_rejects_empty_memex_when_sources_have_history(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
     monkeypatch.setattr(
         pi_client,
@@ -488,7 +490,7 @@ def test_first_run_records_empty_memex_when_no_history(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
     monkeypatch.setattr(
         pi_client,
@@ -583,7 +585,7 @@ def test_first_run_still_fails_empty_memex_when_memory_exists(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
     monkeypatch.setattr(
         pi_client,
@@ -640,6 +642,77 @@ def test_first_run_still_fails_empty_memex_when_memory_exists(
         assert result["status"] == "failed"
         assert "canonical memex is unavailable" in str(result["error"])
         assert db.get_memex(user_id) is None
+    finally:
+        db.close()
+
+
+def test_pi_synthesize_initializes_selected_pi_source_and_projects_custom_workspace(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    update_memex(db, user_id, "existing canonical memex")
+    from syke.source_selection import set_selected_sources
+
+    set_selected_sources(user_id, ["pi"])
+    monkeypatch.setattr(
+        pi_synthesis,
+        "_validate_cycle_output",
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
+    )
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider="kimi-coding",
+            model=model_override or "k2p5",
+        ),
+    )
+
+    captured: dict[str, object] = {}
+    prompts: list[str] = []
+
+    def _prompt(prompt: str, **kwargs) -> SimpleNamespace:
+        prompts.append(prompt)
+        return _pi_success_result("kept existing memex")
+
+    runtime = SimpleNamespace(
+        is_alive=True,
+        model="k2p5",
+        prompt=_prompt,
+        status=lambda: {
+            "workspace": str(tmp_path),
+            "pid": 1,
+            "uptime_s": 1,
+            "session_count": 1,
+        },
+    )
+    monkeypatch.setattr(
+        runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError())
+    )
+
+    def _start(**kwargs):
+        captured.update(kwargs)
+        return runtime
+
+    monkeypatch.setattr(runtime_module, "start_pi_runtime", _start)
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id, workspace_root=tmp_path)
+
+        assert result["status"] == "completed"
+        assert captured["workspace_dir"] == tmp_path
+        assert captured["session_dir"] == tmp_path / "sessions"
+        selected = captured["selected_sources"]
+        assert isinstance(selected, tuple)
+        assert list(selected) == ["pi"]
+        assert prompts and "adapters/pi.md" in prompts[0]
+        assert (tmp_path / "adapters" / "pi.md").is_file()
+        psyche = (tmp_path / "PSYCHE.md").read_text(encoding="utf-8")
+        assert "adapters/pi.md" in psyche
+        projected = (tmp_path / "MEMEX.md").read_text(encoding="utf-8")
+        assert "existing canonical memex" in projected
     finally:
         db.close()
 
@@ -920,7 +993,7 @@ def test_pi_synthesize_versions_in_place_memex_mutation_before_marking_updated(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
     monkeypatch.setattr(
         pi_client,
@@ -1129,7 +1202,7 @@ def test_pi_synthesize_marks_replay_db_validation_issue_failed(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {
+        lambda **_kwargs: {
             "valid": False,
             "issues": ["syke.db read error: database disk image is malformed"],
             "stats": {"syke_db_path": str(tmp_path / "syke.db")},
@@ -1164,7 +1237,9 @@ def test_pi_synthesize_pauses_replay_db_connection_during_agent(
 
     monkeypatch.setenv("SYKE_REPLAY_PAUSE_DB_CONNECTION_DURING_PI", "1")
     monkeypatch.setattr(
-        pi_synthesis, "_validate_cycle_output", lambda: {"valid": True, "issues": [], "stats": {}}
+        pi_synthesis,
+        "_validate_cycle_output",
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
     monkeypatch.setattr(
         pi_client,
@@ -1264,7 +1339,7 @@ def test_pi_synthesize_restores_recovery_point_when_semantic_gate_fails(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
 
     def _prompt(*args, **kwargs) -> SimpleNamespace:
@@ -1327,7 +1402,7 @@ def test_pi_synthesize_marks_stale_running_cycles_incomplete(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
     _install_success_runtime(monkeypatch, lambda *args, **kwargs: _pi_success_result())
 
@@ -1372,7 +1447,7 @@ def test_pi_synthesize_allows_small_replacement_revision(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
 
     def _prompt(*args, **kwargs) -> SimpleNamespace:
@@ -1428,7 +1503,7 @@ def test_pi_synthesize_preserves_direct_active_memory_update(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
 
     def _prompt(*args, **kwargs) -> SimpleNamespace:

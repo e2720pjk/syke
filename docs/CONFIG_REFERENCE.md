@@ -54,60 +54,60 @@ syke config path
 
 ## Top-Level Keys
 
-| Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
-| `user` | `string` | `""` | Default user ID; resolves to system username if empty | `SYKE_USER` |
-| `timezone` | `string` | `"auto"` | Timezone mode for rendering/parsing | `SYKE_TIMEZONE` |
+| Key        | Type     | Default  | Meaning                                               | Env override    |
+| ---------- | -------- | -------- | ----------------------------------------------------- | --------------- |
+| `user`     | `string` | `""`     | Default user ID; resolves to system username if empty | `SYKE_USER`     |
+| `timezone` | `string` | `"auto"` | Timezone mode for rendering/parsing                   | `SYKE_TIMEZONE` |
 
 ---
 
 ## `[synthesis]`
 
-| Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
-| `threshold` | `int` | `5` | Legacy config key (synthesis always runs; the agent decides via temporal context whether anything warrants updating) | `SYKE_SYNC_THRESHOLD` |
-| `thinking_level` | `string` | `"medium"` | Pi thinking level written to workspace settings | `SYKE_SYNC_THINKING_LEVEL` |
-| `timeout` | `int` | `600` | Wall-clock timeout in seconds | `SYKE_SYNC_TIMEOUT` |
-| `first_run_timeout` | `int` | `1500` | Wall-clock timeout for the first synthesis run | `SYKE_SYNC_FIRST_RUN_TIMEOUT` |
+| Key                 | Type     | Default    | Meaning                                                                                                              | Env override                  |
+| ------------------- | -------- | ---------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `threshold`         | `int`    | `5`        | Legacy config key (synthesis always runs; the agent decides via temporal context whether anything warrants updating) | `SYKE_SYNC_THRESHOLD`         |
+| `thinking_level`    | `string` | `"medium"` | Pi thinking level written to workspace settings (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`)       | `SYKE_SYNC_THINKING_LEVEL`    |
+| `timeout`           | `int`    | `600`      | Wall-clock timeout in seconds                                                                                        | `SYKE_SYNC_TIMEOUT`           |
+| `first_run_timeout` | `int`    | `1500`     | Wall-clock timeout for the first synthesis run                                                                       | `SYKE_SYNC_FIRST_RUN_TIMEOUT` |
 
 ---
 
 ## `[daemon]`
 
-| Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
-| `interval` | `int` | `900` | Loop interval in seconds | `SYKE_DAEMON_INTERVAL` |
+| Key        | Type  | Default | Meaning                  | Env override           |
+| ---------- | ----- | ------- | ------------------------ | ---------------------- |
+| `interval` | `int` | `900`   | Loop interval in seconds | `SYKE_DAEMON_INTERVAL` |
 
 ---
 
 ## `[ask]`
 
-| Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
-| `timeout` | `int` | `600` | Ask timeout in seconds | `SYKE_ASK_TIMEOUT` |
-| `max_parallel` | `int` | `8` | Max concurrent daemon-owned temporary ask workers when the warm runtime is busy | `SYKE_MAX_PARALLEL_ASKS` |
+| Key            | Type  | Default | Meaning                                                                         | Env override             |
+| -------------- | ----- | ------- | ------------------------------------------------------------------------------- | ------------------------ |
+| `timeout`      | `int` | `600`   | Ask timeout in seconds                                                          | `SYKE_ASK_TIMEOUT`       |
+| `max_parallel` | `int` | `8`     | Max concurrent daemon-owned temporary ask workers when the warm runtime is busy | `SYKE_MAX_PARALLEL_ASKS` |
 
 ---
 
 ## `[paths]`
 
-| Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
+| Key        | Type     | Default          | Meaning                                                                                                                                | Env override    |
+| ---------- | -------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
 | `data_dir` | `string` | `"~/.syke/data"` | Legacy config key (flat workspace model means `user_data_dir()` returns `~/.syke/` directly; this key is not used for path resolution) | `SYKE_DATA_DIR` |
 
 ### `[paths.sources]`
 
-| Key | Type | Default | Meaning |
-|---|---|---|---|
+| Key           | Type     | Default       | Meaning                 |
+| ------------- | -------- | ------------- | ----------------------- |
 | `claude_code` | `string` | `"~/.claude"` | Claude Code source root |
-| `codex` | `string` | `"~/.codex"` | Codex source root |
+| `codex`       | `string` | `"~/.codex"`  | Codex source root       |
 
 ### `[paths.distribution]`
 
-| Key | Type | Default | Meaning |
-|---|---|---|---|
-| `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Retained only for deferred harness-specific memex injection work |
-| `skills_dirs` | `array[string]` | `.agents`, Claude, Gemini, Hermes, Codex, Cursor, OpenCode skill dirs | Capability installation targets |
+| Key           | Type            | Default                                                               | Meaning                                                          |
+| ------------- | --------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `claude_md`   | `string`        | `"~/.claude/CLAUDE.md"`                                               | Retained only for deferred harness-specific memex injection work |
+| `skills_dirs` | `array[string]` | `.agents`, Claude, Gemini, Hermes, Codex, Cursor, OpenCode skill dirs | Capability installation targets                                  |
 
 Note: In the flat workspace model, everything lives at `~/.syke/` directly. There is no `data/{user}/` nesting. `data_dir` is a legacy key in the config schema.
 
@@ -166,7 +166,7 @@ user = "saxenauts"
 timezone = "auto"
 
 [synthesis]
-thinking_level = "medium"
+thinking_level = "medium" # off|minimal|low|medium|high|xhigh|max
 timeout = 600
 first_run_timeout = 1500
 
@@ -183,17 +183,17 @@ timeout = 600
 
 These env vars are not config-file keys but are read by the runtime:
 
-| Env Var | Default | Meaning |
-|---|---|---|
-| `SYKE_PROVIDER` | — | Per-process provider override |
-| `SYKE_DB` | — | Override per-user DB path (testing/custom setups) |
-| `SYKE_WORKSPACE_ROOT` | `~/.syke` | Override Pi workspace directory |
-| `SYKE_PI_AGENT_DIR` | `~/.syke/pi-agent` | Override Pi agent state directory |
-| `SYKE_PI_STATE_AUDIT_PATH` | `~/.config/syke/pi-state-audit.log` | Override Pi state audit log path |
-| `SYKE_ALLOW_EMPTY_MEMEX` | — | Replay/test escape hatch: allow synthesis to complete with an empty MEMEX |
-| `SYKE_REPLAY_PAUSE_DB_CONNECTION_DURING_PI` | — | Replay/test escape hatch: close Syke's DB connection while Pi runs |
-| `SYKE_DISABLE_SANDBOX` | — | Disable the Pi sandbox when set |
-| `SYKE_SANDBOX_HARNESS_PATHS` | — | Extra sandbox-readable harness paths |
+| Env Var                                     | Default                             | Meaning                                                                   |
+| ------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------- |
+| `SYKE_PROVIDER`                             | —                                   | Per-process provider override                                             |
+| `SYKE_DB`                                   | —                                   | Override per-user DB path (testing/custom setups)                         |
+| `SYKE_WORKSPACE_ROOT`                       | `~/.syke`                           | Override Pi workspace directory                                           |
+| `SYKE_PI_AGENT_DIR`                         | `~/.syke/pi-agent`                  | Override Pi agent state directory                                         |
+| `SYKE_PI_STATE_AUDIT_PATH`                  | `~/.config/syke/pi-state-audit.log` | Override Pi state audit log path                                          |
+| `SYKE_ALLOW_EMPTY_MEMEX`                    | —                                   | Replay/test escape hatch: allow synthesis to complete with an empty MEMEX |
+| `SYKE_REPLAY_PAUSE_DB_CONNECTION_DURING_PI` | —                                   | Replay/test escape hatch: close Syke's DB connection while Pi runs        |
+| `SYKE_DISABLE_SANDBOX`                      | —                                   | Disable the Pi sandbox when set                                           |
+| `SYKE_SANDBOX_HARNESS_PATHS`                | —                                   | Extra sandbox-readable harness paths                                      |
 
 ---
 

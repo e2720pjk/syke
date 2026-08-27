@@ -1,3 +1,5 @@
+# pyright: reportMissingImports=false
+
 """Tests for Syke's Pi-native provider resolution and workspace config."""
 
 from __future__ import annotations
@@ -187,6 +189,59 @@ class TestProviderReadiness:
         assert not status.ready
         assert "Configured default model 'sonnet'" in status.detail
 
+    def test_gpt56_alias_and_thinking_suffix_are_validated_against_pi_catalog(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "syke.llm.env.get_pi_provider_catalog",
+            lambda: _catalog(
+                PiProviderCatalogEntry(
+                    "openai-codex",
+                    ("gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"),
+                    ("gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"),
+                    "gpt-5.5",
+                    True,
+                    "ChatGPT Plus/Pro (Codex Subscription)",
+                )
+            ),
+        )
+        monkeypatch.setattr("syke.llm.env.get_default_provider", lambda: "openai-codex")
+        monkeypatch.setattr("syke.llm.env.get_default_model", lambda: "gpt-5.6:max")
+        monkeypatch.setattr(
+            "syke.llm.env.get_credential",
+            lambda provider_id: {"type": "oauth"},
+        )
+
+        status = evaluate_provider_readiness("openai-codex")
+
+        assert status.ready
+
+    def test_gpt56_canonical_model_remains_available_with_max_suffix(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "syke.llm.env.get_pi_provider_catalog",
+            lambda: _catalog(
+                PiProviderCatalogEntry(
+                    "openai-codex",
+                    ("gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"),
+                    ("gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"),
+                    "gpt-5.6-luna",
+                    False,
+                )
+            ),
+        )
+        monkeypatch.setattr("syke.llm.env.get_default_provider", lambda: "openai-codex")
+        monkeypatch.setattr("syke.llm.env.get_default_model", lambda: "gpt-5.6-terra:max")
+        monkeypatch.setattr(
+            "syke.llm.env.get_credential",
+            lambda provider_id: {"type": "api_key"},
+        )
+
+        status = evaluate_provider_readiness("openai-codex")
+
+        assert status.ready
+
     def test_oauth_provider_with_persisted_oauth_credential_is_ready(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -286,6 +341,17 @@ class TestPiWorkspaceSettings:
         assert settings["quietStartup"] is True
         assert "defaultProvider" not in settings
         assert "defaultModel" not in settings
+
+    def test_workspace_settings_preserve_max_thinking_level(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
+        monkeypatch.setattr("syke.runtime.pi_settings.SYNC_THINKING_LEVEL", "max")
+
+        configure_pi_workspace(tmp_path)
+        settings = json.loads((tmp_path / ".pi" / "settings.json").read_text())
+
+        assert settings["defaultThinkingLevel"] == "max"
 
 
 class TestConfigImportBehavior:

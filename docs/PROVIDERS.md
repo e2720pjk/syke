@@ -9,7 +9,8 @@ Authoritative provider reference for the current CLI/runtime surface.
 Pick a provider you already trust, activate it, then confirm the resolved runtime:
 
 ```bash
-syke auth set openai --api-key <key> --model gpt-5.4 --use
+syke auth login openai-codex --use
+syke auth set openai-codex --model gpt-5.6-luna --use
 syke auth status
 ```
 
@@ -45,25 +46,34 @@ Important:
 
 ## Provider Matrix
 
-| Provider Class | Example | Notes |
-|---|---|---|
-| API-key Pi provider | `syke auth set openrouter --api-key <key> --model openai/gpt-5.1-codex --use` | Use Pi provider IDs such as `openai`, `openrouter`, `zai`, `kimi-coding`, or `azure-openai-responses`. |
-| Pi-native OAuth provider | `syke auth login openai-codex --use` | Uses Pi's native login flow and stores the result in `~/.syke/pi-agent/auth.json`. |
-| Custom OpenAI-compatible provider | `syke auth set localproxy --base-url URL --model MODEL --use` | For self-hosted or local OpenAI-compatible endpoints that are not in Pi's built-in catalog. |
+| Provider Class                    | Example                                                                       | Notes                                                                                                  |
+| --------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| API-key Pi provider               | `syke auth set openrouter --api-key <key> --model openai/gpt-5.1-codex --use` | Use Pi provider IDs such as `openai`, `openrouter`, `zai`, `kimi-coding`, or `azure-openai-responses`. |
+| Pi-native OAuth provider          | `syke auth login openai-codex --use`                                          | Uses Pi's native login flow and stores the result in `~/.syke/pi-agent/auth.json`.                     |
+| Custom OpenAI-compatible provider | `syke auth set localproxy --base-url URL --model MODEL --use`                 | For self-hosted or local OpenAI-compatible endpoints that are not in Pi's built-in catalog.            |
 
-Syke does not ship its own provider registry anymore. The available built-in providers and models come from Pi's live catalog.
+Syke does not ship its own provider registry anymore. The available built-in providers and models come from Pi's live catalog. With the managed Pi runtime (0.84.1), the `openai-codex` catalog includes the GPT-5.6 series (`gpt-5.6-luna`, `gpt-5.6-sol`, and `gpt-5.6-terra` when advertised by Pi).
+
+Set maximum reasoning for synthesis in `~/.syke/config.toml`:
+
+```toml
+[synthesis]
+thinking_level = "max"
+```
+
+`max` is passed through to Pi; the selected model still decides which levels it supports.
 
 ---
 
 ## Auth Commands
 
-| Command | What it does |
-|---|---|
-| `syke auth set <provider> ... --use` | Store credentials/config and make that provider active |
-| `syke auth use <provider>` | Switch the active provider to an already configured provider |
-| `syke auth status` | Show the selected runtime, auth source, model, endpoint, and configured providers |
-| `syke auth status --json` | Machine-readable provider/auth/model/endpoint resolution |
-| `syke auth unset <provider>` | Remove stored credentials for provider; clears active provider if removed |
+| Command                              | What it does                                                                      |
+| ------------------------------------ | --------------------------------------------------------------------------------- |
+| `syke auth set <provider> ... --use` | Store credentials/config and make that provider active                            |
+| `syke auth use <provider>`           | Switch the active provider to an already configured provider                      |
+| `syke auth status`                   | Show the selected runtime, auth source, model, endpoint, and configured providers |
+| `syke auth status --json`            | Machine-readable provider/auth/model/endpoint resolution                          |
+| `syke auth unset <provider>`         | Remove stored credentials for provider; clears active provider if removed         |
 
 Storage details:
 
@@ -100,7 +110,10 @@ syke auth set openai --api-key <key> --model gpt-5.4 --use
 
 ```bash
 syke auth login openai-codex --use
+syke auth set openai-codex --model gpt-5.6-luna --use
 ```
+
+The interactive `syke auth` model menu is populated from Pi's live catalog, so it shows the GPT-5.6 entries after the managed runtime has been upgraded.
 
 ### Other Supported Providers
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -46,6 +47,20 @@ _CATALOG: tuple[SourceSpec, ...] = (
                 DiscoverRoot(
                     path="~/.codex",
                     include=["**/*.jsonl", "**/*.db", "**/*.sqlite", "config.toml"],
+                    priority=20,
+                ),
+            ]
+        ),
+    ),
+    SourceSpec(
+        source="pi",
+        format_cluster="jsonl",
+        artifact_hints=("jsonl", "session", "transcript", "thinking", "tool-call"),
+        discover=DiscoverConfig(
+            roots=[
+                DiscoverRoot(
+                    path="~/.pi/agent/sessions",
+                    include=["**/*.jsonl"],
                     priority=20,
                 ),
             ]
@@ -207,6 +222,46 @@ def _resolve_root_path(raw_path: str, *, home: Path | None = None) -> Path:
     return Path(raw_path).expanduser()
 
 
+def _pi_excluded_paths(*, home: Path | None = None) -> tuple[Path, ...]:
+    base_home = (home or Path.home()).expanduser().resolve()
+    syke_roots = {base_home / ".syke"}
+    if home is None:
+        workspace_override = os.getenv("SYKE_WORKSPACE_ROOT")
+        if workspace_override:
+            syke_roots.add(Path(workspace_override).expanduser().resolve())
+
+    excluded = [root / "sessions" for root in syke_roots]
+    if home is None:
+        agent_override = os.getenv("SYKE_PI_AGENT_DIR")
+        excluded.append(
+            Path(agent_override).expanduser().resolve()
+            if agent_override
+            else base_home / ".syke" / "pi-agent"
+        )
+    else:
+        excluded.append(base_home / ".syke" / "pi-agent")
+    return tuple(path.resolve() for path in excluded)
+
+
+def is_excluded_discovered_path(
+    spec: SourceSpec,
+    path: Path,
+    *,
+    home: Path | None = None,
+) -> bool:
+    """Reject Pi paths that resolve into Syke-owned runtime state."""
+    if spec.source != "pi":
+        return False
+    try:
+        resolved = path.expanduser().resolve()
+    except OSError:
+        return True
+    return any(
+        resolved == excluded or excluded in resolved.parents
+        for excluded in _pi_excluded_paths(home=home)
+    )
+
+
 def iter_discovered_files(spec: SourceSpec, *, home: Path | None = None) -> list[Path]:
     files: list[Path] = []
     seen: set[Path] = set()
@@ -216,6 +271,8 @@ def iter_discovered_files(spec: SourceSpec, *, home: Path | None = None) -> list
             try:
                 resolved = root_path.resolve()
             except OSError:
+                continue
+            if is_excluded_discovered_path(spec, resolved, home=home):
                 continue
             if resolved not in seen:
                 seen.add(resolved)
@@ -231,6 +288,8 @@ def iter_discovered_files(spec: SourceSpec, *, home: Path | None = None) -> list
                     resolved = match.resolve()
                 except OSError:
                     continue
+                if is_excluded_discovered_path(spec, resolved, home=home):
+                    continue
                 if resolved in seen:
                     continue
                 seen.add(resolved)
@@ -244,7 +303,10 @@ def discovered_roots(spec: SourceSpec, *, home: Path | None = None) -> list[Path
         root_path = _resolve_root_path(root.path, home=home)
         if root_path.exists():
             try:
-                roots.append(root_path.resolve())
+                resolved = root_path.resolve()
             except OSError:
                 continue
+            if is_excluded_discovered_path(spec, resolved, home=home):
+                continue
+            roots.append(resolved)
     return roots

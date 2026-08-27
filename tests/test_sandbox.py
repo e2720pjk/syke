@@ -52,6 +52,14 @@ def test_profile_contains_harness_paths(tmp_path: Path) -> None:
         assert f'(allow file-read* (subpath "{p}"))' in profile
 
 
+def test_profile_includes_external_pi_sessions(tmp_path: Path) -> None:
+    pi_root = str((Path.home() / ".pi" / "agent" / "sessions").resolve())
+
+    assert pi_root in _harness_read_paths(selected_sources=("pi",))
+    profile = generate_seatbelt_profile(tmp_path, selected_sources=("pi",))
+    assert f'(allow file-read* (subpath "{pi_root}"))' in profile
+
+
 def test_profile_respects_selected_sources_filter(tmp_path: Path) -> None:
     all_paths = _harness_read_paths()
     selected_paths = _harness_read_paths(selected_sources=("codex",))

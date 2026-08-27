@@ -53,7 +53,7 @@ syke setup --agent
 
 `--agent` returns JSON with a `status` field:
 
-- `needs_runtime` - install Node.js 20+ (22 LTS recommended) and rerun setup
+- `needs_runtime` - install Node.js >= 22.19.0 and rerun setup
 - `needs_provider` - configure provider auth and rerun setup
 - `complete` - setup finished
 - `failed` - inspect the returned `error`
@@ -356,7 +356,7 @@ release.
 
 ## Troubleshooting
 
-- `needs_runtime` from `syke setup --agent`: install Node.js 20+ (22 LTS recommended).
+- `needs_runtime` from `syke setup --agent`: install Node.js >= 22.19.0.
 - Provider/auth failures: run `syke auth status` then `syke doctor`.
 - Empty/old memex: run `syke sync`, then `syke memex`.
 - Background service unavailable on macOS source checkouts under protected folders: use `syke install-current` and rerun setup.

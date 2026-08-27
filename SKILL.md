@@ -1,6 +1,6 @@
 ---
 name: syke
-description: "Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke memex`, and `syke record` for continuity across sessions."
+description: 'Local-first cross-harness memory for agents. Syke observes activity across supported harnesses, keeps a current memex in context, and gives agents `syke ask`, `syke memex`, and `syke record` for continuity across sessions.'
 version: 0.5.10
 author: saxenauts
 license: AGPL-3.0-only
@@ -10,13 +10,13 @@ metadata:
     related_skills: []
     requires_toolsets: [terminal]
   requires:
-    bins: ["syke"]
+    bins: ['syke']
   install:
     - id: pipx
       kind: pipx
       package: syke
-      bins: ["syke"]
-      label: "Install Syke (pipx)"
+      bins: ['syke']
+      label: 'Install Syke (pipx)'
 ---
 
 # Syke
@@ -35,13 +35,13 @@ Canonical memex path: `~/.syke/MEMEX.md`
 
 ## Quick Reference
 
-| Command | Use | Exit 0 | Exit 1 |
-|---------|-----|--------|--------|
+| Command               | Use               | Exit 0           | Exit 1                        |
+| --------------------- | ----------------- | ---------------- | ----------------------------- |
 | `syke ask "question"` | Deep memory query | Answer on stdout | Error on stderr, stdout empty |
-| `syke memex` | Current memex | Memex on stdout | Error message |
-| `syke record "text"` | Write observation | Confirmation | Error message |
-| `syke status` | Runtime snapshot | Status on stdout | Error message |
-| `syke doctor` | Health check | All OK | Issues found |
+| `syke memex`          | Current memex     | Memex on stdout  | Error message                 |
+| `syke record "text"`  | Write observation | Confirmation     | Error message                 |
+| `syke status`         | Runtime snapshot  | Status on stdout | Error message                 |
+| `syke doctor`         | Health check      | All OK           | Issues found                  |
 
 ## Procedure
 
@@ -81,7 +81,7 @@ For unattended agents, installers, and CI:
 
 1. Run `syke setup --agent`.
 2. Parse the JSON `status`, `next_steps`, and `exit_code` fields.
-3. If `status` is `"needs_runtime"`, install Node.js 20+ (22 LTS recommended)
+3. If `status` is `"needs_runtime"`, install Node.js >= 22.19.0
    and rerun `syke setup --agent`.
 4. If `status` is `"needs_provider"`, configure provider auth with
    `syke auth set <provider> --api-key <API_KEY> --use` or
@@ -95,11 +95,11 @@ For Azure, also pass `--base-url https://<resource>.openai.azure.com/openai/v1` 
 
 ## Provider Commands
 
-| Command | What It Does |
-|---------|-------------|
-| `syke auth status` | Show selected provider, auth source, model, and endpoint |
-| `syke auth use <name>` | Switch active provider |
-| `syke auth set <name> --api-key <KEY> --use` | Store credentials and make this the active provider |
-| `syke config show` | Show effective config |
+| Command                                      | What It Does                                             |
+| -------------------------------------------- | -------------------------------------------------------- |
+| `syke auth status`                           | Show selected provider, auth source, model, and endpoint |
+| `syke auth use <name>`                       | Switch active provider                                   |
+| `syke auth set <name> --api-key <KEY> --use` | Store credentials and make this the active provider      |
+| `syke config show`                           | Show effective config                                    |
 
 Provider resolution: CLI `--provider` flag > `SYKE_PROVIDER` env > Pi `defaultProvider` in `~/.syke/pi-agent/settings.json`.

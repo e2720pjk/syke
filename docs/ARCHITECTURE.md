@@ -43,6 +43,7 @@ Authority is split cleanly:
 **Memory is maintenance.** Beyond store and retrieve, memory needs active care: synthesis cycles, daemon-driven updates, health checks, evolution tracking. This is why agentic memory requires an agent — not just a database with an API, but an autonomous process that maintains, curates, and evolves the knowledge base.
 
 **Core principles:**
+
 - **The agent reads harness data directly** — adapter markdowns describe format and location; the agent uses bash/sqlite3 to inspect harness artifacts at synthesis time. No Python copy pipeline, no events.db staging.
 - **Evidence ≠ inference** — raw harness data (what happened) stays at the source; memories (what it means) are mutable and agent-written in syke.db
 - **The agent crawls text** — FTS5/BM25 for retrieval, LLM for understanding. No vector DB needed.
@@ -105,7 +106,7 @@ Instead, each harness gets an **adapter markdown** installed at `~/.syke/adapter
 - how to read it (JSONL structure, SQLite schemas, JSON layout)
 - what to look for (sessions, turns, tool calls, timestamps)
 
-The agent reads harness data directly using bash and sqlite3 during synthesis and ask.
+The agent reads harness data directly using bash and sqlite3 during synthesis and ask. Pi is both the canonical runtime and an active ingestion source: the `pi` adapter reads external Pi history from `~/.pi/agent/sessions/**/*.jsonl`. Syke deliberately excludes its own `~/.syke/sessions/` runtime audit files and `~/.syke/pi-agent/` state so synthesis cannot ingest its own prompts or credentials.
 
 ### Observe Bootstrap
 
@@ -141,14 +142,17 @@ The memex is rendered back into agent environments. The authoritative mutable st
 # Memex — {user}
 
 ## What's Happening Now (stable entities)
+
 [mem_xxx] Project Name — one-line status
 [mem_yyy] Person — relationship context
 
 ## Patterns & Threads
+
 Topic → search 'keyword' or query linked memories for mem_xxx
 Recent → query events since last_week
 
 ## Context
+
 Sources: claude-code, github, chatgpt. N events. Last sync: date.
 ```
 
