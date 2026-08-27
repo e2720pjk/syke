@@ -1,272 +1,324 @@
 # opencode
 
-Opencode is a terminal-based AI coding agent. It runs in a terminal, accepts natural-language prompts, and executes tool calls for code editing, file operations, and shell commands. It stores all session data in a single SQLite database. Sessions can have parent-child relationships for subagent tasks, and OpenCode 2.0 adds forked sessions.
+OpenCode is a terminal-based coding agent. Its conversation history is in a
+SQLite database. Syke keeps OpenCode at the source: this file is an
+**LLM-first adapter guide**, not a Python ingest parser. During an observation
+cycle the agent uses the guide and read-only `sqlite3`/shell queries, reasons
+over bounded results, and writes only Syke-owned memory to `syke.db`.
 
-OpenCode currently ships two coexisting session schemas in the same database:
+The live database can contain either schema or both schemas. Do not assume that
+either schema is present, and do not treat session-level deduplication as
+message-level deduplication.
 
-- **legacy schema**: `session`, `message`, `part` tables. These stopped receiving updates but still hold historical sessions.
-- **v2 schema**: `session_v2`, `session_message`. This is the active schema for current sessions.
+## Where and discovery
 
-Both must be read and merged, with `session_v2` winning on ID conflicts (see "Deduplication" below).
+The catalog discovers regular files matching `opencode*.db` under:
 
-## Where
-
+```text
+~/.local/share/opencode/
 ```
-~/.local/share/opencode/opencode.db
-```
 
-The catalog discovery pattern is `opencode*.db`, covering filenames that
-start with `opencode` and end with `.db` (including `opencode.db` and channel
-variants). Its equivalent filename regex is `^opencode.*\.db$`.
+The equivalent filename regular expression is `^opencode.*\.db$`. This includes
+`opencode.db` and channel variants such as `opencode-channel.db`; it excludes
+`opencode.db-wal`, `opencode.db-shm`, other sidecars, and unrelated files.
+WAL/SHM files are not artifacts: never ingest, copy, open directly, or report
+their contents.
 
-> WAL/SHM sidecar files (`opencode.db-wal`, `opencode.db-shm`) are NOT artifacts.
-> Never ingest them, never copy them, never include them in discovery results.
-> The DB is WAL-mode and actively written by opencode — open it read-only and let
-> SQLite resolve the WAL through the normal read path.
+## Read boundary and safety
 
-## Read safety (mandatory)
+The database is a live WAL-mode database (the primary file may be about 1.2 GB).
+Every read must be:
 
-The database is live and ~1 GB+. All access MUST be:
+- **Read-only and WAL-aware.** Open an absolute path with SQLite URI
+  `file:<quoted-absolute-path>?mode=ro`, `uri=True`, and a finite timeout; set
+  `PRAGMA busy_timeout = 5000`. Never add `immutable=1`: it ignores the WAL and
+  can hide recent sessions.
+- **Parameterized.** Bind session IDs, message IDs, timestamps, page sizes,
+  offsets, and truncation lengths. Never interpolate values into SQL.
+- **Short and bounded.** Every data query has a parameterized `LIMIT`; page
+  with a stable order and `OFFSET` (or a remembered key) rather than loading a
+  whole history. Use `substr(..., 1, ?)` for raw JSON previews and cap every
+  rendered text, reasoning note, tool input, tool output, error, path, and
+  metadata value. A bounded output is required even when the source row is
+  valid JSON.
+- **Non-blocking.** Keep transactions short. On `SQLITE_BUSY`/locked reads,
+  back off and retry briefly or skip/report the page; never hold a database
+  lock while doing LLM work.
 
-- **Read-only.** Open with the SQLite URI read-only flag plus a busy timeout:
-  `file:<abs path>?mode=ro` and set a busy timeout (e.g. 5000 ms) so a
-  concurrent opencode writer doesn't instantly fail the read. Do NOT use
-  `immutable=1` — it makes SQLite ignore the WAL and you will silently miss the
-  most recent sessions.
-- **Parameterized.** Never interpolate IDs or timestamps as string literals.
-- **Bounded.** Every query has `LIMIT`. Page long histories instead of loading
-  all rows. Truncate long text fields (e.g. `substr(data, 1, N)`) when you only
-  need metadata.
-- **Never blocking.** Use short transactions; never hold a lock on the DB while
-  doing other work. If a read fails with `SQLITE_BUSY`, back off and retry, or
-  skip and report.
-
-Example connection (Python):
+Example connection:
 
 ```python
 import sqlite3
 from urllib.parse import quote
 
-db = "/home/user/.local/share/opencode/opencode.db"  # absolute path
+db = "/home/user/.local/share/opencode/opencode.db"
 conn = sqlite3.connect(f"file:{quote(db)}?mode=ro", uri=True, timeout=5.0)
 conn.execute("PRAGMA busy_timeout = 5000")
 ```
 
-## Never-query list
+Never write to this database. Never emit or copy credentials, secrets, private
+chat beyond the bounded evidence needed for the current observation, raw
+reasoning blobs, or unbounded JSON/tool output.
 
-The same database contains sensitive tables. Do NOT query, join against, or
-mention row contents from any of these. A query plan touching them is a
-privacy violation:
+## Privacy allowlist
 
-- `credential`
-- `account`
-- `account_state`
-- `control_account`
-- `event`
-- `event_sequence`
-- `session_pending`
-- `session_inbox`
-- `session_share` (contains share secrets)
-- any other table not in the allowlist below
+Only inspect these tables, and only for the fields needed below:
 
-The ONLY tables you may read: `session_v2`, `session_message`, `session`
-(legacy), `message` (legacy), `part` (legacy), `project`, `workspace`.
-The observed `workspace` columns are `provider`, `binding`, `created_at`, and
-`last_used_at`; do not assume legacy/documentation-only `type`, `name`,
-`directory`, or `extra` columns.
+- v2: `session_v2`, `session_message`
+- legacy: `session`, `message`, `part`
+- optional session metadata: `project`, `workspace`
 
-Additionally, even inside the allowlist: assistant `reasoning` content items
-may be encrypted/opaque blobs from the provider — never attempt to decrypt or
-dump raw reasoning blobs into output. Summarize that reasoning occurred; quote
-at most a short snippet of plaintext reasoning.
+Do not query, join, or dump rows from credential/account/event/pending/inbox or
+share-secret tables (including `credential`, `account`, `account_state`,
+`control_account`, `event`, `event_sequence`, `session_pending`,
+`session_inbox`, and `session_share`). Do not probe arbitrary tables. The
+observed `workspace` columns are `provider`, `binding`, `created_at`, and
+`last_used_at`; do not assume documentation-only columns such as `type`,
+`name`, `directory`, or `extra`.
 
-## Schema: v2 (authoritative)
+Reasoning content may be encrypted or opaque. Record only a bounded note that
+reasoning occurred (and at most a short, explicitly safe plaintext snippet),
+never the raw blob.
 
-### Table: `session_v2`
+## Detect the schema before querying
 
-| Column | Notes |
-| --- | --- |
-| `id`, `project_id`, `workspace_id` | Identifiers / FKs |
-| `parent_id` | Null for root sessions; set for subagent sessions |
-| `fork_session_id`, `fork_boundary` | V2-only fork lineage (which session this forked from, and the message boundary) |
-| `slug`, `directory`, `path` | Naming / working directory; `path` is the session storage path (not a chat artifact) |
-| `title`, `version`, `share_url` | Display + share metadata |
-| `summary_additions`, `summary_deletions`, `summary_files`, `summary_diffs` | Code-change stats |
-| `metadata` | JSON blob |
-| `cost`, `tokens_input`, `tokens_output`, `tokens_reasoning`, `tokens_cache_read`, `tokens_cache_write` | Usage/cost |
-| `revert`, `permission` | JSON blobs |
-| `agent`, `model` | Which agent/model ran the session |
-| `time_created`, `time_updated`, `time_compacting`, `time_archived`, `time_suspended` | ms-epoch timestamps; `time_updated` is the live recency signal |
-| `resume_attempts`, `time_idle`, `time_viewed`, `idle_outcome` | Session lifecycle bookkeeping |
+First query SQLite's catalog, then branch in the agent based on the returned
+set. This catalog query is metadata only and has a `LIMIT`:
 
-### Table: `session_message`
+```sql
+SELECT name
+FROM sqlite_master
+WHERE type = 'table'
+  AND name IN ('session_v2', 'session_message', 'session', 'message', 'part',
+               'project', 'workspace')
+ORDER BY name
+LIMIT ?;
+```
 
-| Column | Notes |
-| --- | --- |
-| `id`, `session_id` | Message ID / FK to `session_v2` |
-| `type` | **Role lives here, not in `data`.** Values: `user`, `assistant`, `synthetic`, `system`, `compaction` |
-| `seq` | Integer ordering key; no NULLs; `(session_id, seq)` is indexed |
-| `time_created`, `time_updated` | ms epoch |
-| `data` | JSON payload, shape depends on `type` |
+Never issue a query that names a table not returned by detection. In
+particular, do not use a CTE or `UNION ALL` that mentions both schemas when one
+is absent. A pure legacy database may have only `session`/`message`/`part`; a
+pure v2 database may have only `session_v2`/`session_message`; a mixed database
+may have all five conversation tables. Detect each table independently and
+read only the available stream.
 
-Ordering messages: `ORDER BY seq ASC, time_created ASC, id ASC` (seq is primary; time/id break ties).
+## Schemas
 
-`data` for `type='assistant'`: keys include `agent`, `model`, `content[]`,
-`snapshot`, `finish`, `cost`, `tokens`, `time`, `error`, `providerState`.
-`content[]` item types:
+### v2 session metadata: `session_v2`
 
-- `{type: "text", text}` — assistant answer text
-- `{type: "reasoning", ...}` — internal reasoning; treat as opaque summary signal
-- `{type: "tool", state: {...}}` — tool call. `state.status` is `success` (or
-  in-progress/failed variants) and output lives in **`state.content`** (NOT
-  `state.output` — that's legacy only). Errors surface in `state.error`.
+Useful columns include `id`, `project_id`, `workspace_id`, `parent_id`,
+`fork_session_id`, `fork_boundary`, `slug`, `directory`, `path`, `title`,
+`version`, `share_url`, summary fields, `metadata`, cost/token fields,
+`revert`, `permission`, `agent`, `model`, and lifecycle timestamps including
+`time_created`, `time_updated`, `time_archived`, `time_suspended`, and
+`time_idle`. Fork fields are v2-only. Treat `time_updated` as the live recency
+signal when it is present.
 
-`data` for `type='user'`: keys `text`, `files`, `agents`, `time`.
+### v2 messages: `session_message`
 
-`data` for `type='synthetic'`: keys `text`, `time`, `metadata`, `description`.
-`data` for `type='system'`: keys `time`, `text`, `description`.
-`type='compaction'`: context-compaction placeholder.
+Columns are `id`, `session_id`, `type`, `seq`, `time_created`, `time_updated`,
+and JSON `data`. **The role is `type`, not a role field in `data`.** The
+observed types include `user`, `assistant`, `synthetic`, `system`, and
+`compaction`; tolerate future types.
 
-**Conversation reconstruction uses only `user` and `assistant` messages.**
-Skip `compaction`, `synthetic`, and `system` messages for conversation body,
-but do NOT drop the session — a session consisting only of compaction/system
-messages after filtering still exists and counts for recency. Malformed JSON
-in `data` or unknown content item types must be tolerated: skip the item, keep
-reading the session.
+- A user payload may contain `text`, `files`, `agents`, and `time`.
+- An assistant payload may contain `content[]`, `agent`, `model`, `snapshot`,
+  `finish`, `cost`, `tokens`, `time`, `error`, and `providerState`.
+- A content item `{type: "text", text}` is assistant text.
+- `{type: "reasoning", ...}` is a reasoning marker only; do not print its
+  payload.
+- `{type: "tool", state: {...}}` is a tool call. Its output is in
+  `state.content`, and failures may have `state.error`.
+- Tool `state.status` is normally **`completed`** or **`error`**. Preserve and
+  label an unknown future status; never normalize it to a known terminal state,
+  and never infer semantics for a value not observed in this schema.
 
-## Schema: legacy (`session` / `message` / `part`)
+The v2 stream's intrinsic order is `ORDER BY seq ASC, time_created ASC, id
+ASC`; `seq` is primary. Do not substitute row insertion order.
 
-`session` (legacy) actually carries more than legacy docs imply: its columns
-include `id`, `project_id`, `parent_id`, `slug`, `directory`, `title`,
-`version`, `share_url`, `summary_additions/deletions/files`, `summary_diffs`,
-`revert`, `permission`, `agent`, `model`, `cost`, `tokens_input`,
-`tokens_output`, `tokens_reasoning`, `tokens_cache_read`,
-`tokens_cache_write`, `path`, and `time_created` / `time_updated` /
-`time_archived`. (No fork columns — forks are v2-only.) Note: `time_updated`
-stopped advancing for all legacy rows after the migration point.
+### legacy metadata and messages: `session`, `message`, `part`
 
-`message`: `id`, `session_id`, `time_created`, `time_updated`, `data` (JSON).
-The `data` JSON carries a `role` field (`user` / `assistant`), `model`,
-`tokens`, `cost`, `agent`, `finish`, `path`, etc.
+`session` has `id`, project/parent/path/title/version/share fields, summary and
+cost/token fields, `agent`, `model`, and `time_created`/`time_updated`/
+`time_archived`. Legacy `time_updated` stopped advancing at migration, so it
+cannot be the only recency signal.
 
-`part`: `id`, `message_id`, `session_id`, `time_created`, `time_updated`,
-`data` (JSON). `data.type` ∈ `text` / `reasoning` / `tool` / `patch` /
-`file` / `compaction` / `step-finish`. Legacy tool parts store output in
-**`state.output`** (this differs from v2). Skip `compaction` and
-`step-finish` parts for conversation body.
+`message` has `id`, `session_id`, `time_created`, `time_updated`, and JSON
+`data`. Its payload has a `role` (`user`/`assistant`) and may contain message
+metadata or fallback text. `part` has `id`, `message_id`, `session_id`,
+time fields, and JSON `data`. Part types include `text`, `reasoning`, `tool`,
+`patch`, `file`, `compaction`, and `step-finish`.
 
-## Deduplication (legacy + v2 coexistence)
+Legacy tool output is in **`state.output`** (not v2's `state.content`). Legacy
+tool statuses commonly use `completed`/`error`; tolerate unknown statuses
+without inventing a meaning. Skip `compaction` and `step-finish` parts in the
+conversation body. Reconstruct legacy-only messages by reading their parts
+keyed by `message_id` after the message query; cap each part before rendering.
+Do not SQL-join legacy messages/parts to v2 messages.
 
-Session IDs overlap between `session` and `session_v2`. Rules:
+## Session metadata: the only cross-schema union
 
-1. **v2 wins on conflict.** If an ID appears in both tables, use the
-   `session_v2` row for title/metadata/cost/agent.
-2. **Legacy fills pre-migration history.** Messages for a split session may
-   exist in `message`/`part` up to the migration point and in
-   `session_message` afterwards. Union both message streams; order legacy
-   messages by `time_created ASC, id ASC` and v2 messages by
-   `seq, time_created, id`; v2 messages sort after legacy when interleaved.
-3. **Recency is the union.** For listing/sorting by recency use
-   `max(time_updated across both tables per session_id)` — a session frozen in
-   legacy can still be live in v2.
-
-## Query recipes (read-only, bounded)
-
-Recent sessions across both schemas, deduped with v2 winning, with legacy
-history folded in:
+A SQL `JOIN` or `UNION ALL` is permitted for **session metadata only**, after
+schema detection confirms the referenced tables. It is not a conversation
+merge. When both `session_v2` and `session` exist, use separate metadata
+branches or this mixed-schema CTE; execute it only in the both-present branch:
 
 ```sql
 WITH merged AS (
-  SELECT id, title, time_created, time_updated, agent, model,
-         2 AS src
+  SELECT id, substr(title, 1, ?) AS title, time_created, time_updated,
+         substr(agent, 1, ?) AS agent, substr(model, 1, ?) AS model,
+         2 AS source_rank
   FROM session_v2
   UNION ALL
-  SELECT id, title, time_created, time_updated, agent, model,
-         1 AS src
+  SELECT id, substr(title, 1, ?) AS title, time_created, time_updated,
+         substr(agent, 1, ?) AS agent, substr(model, 1, ?) AS model,
+         1 AS source_rank
   FROM session
-),
-chosen AS (
-  SELECT *,
-         ROW_NUMBER() OVER (PARTITION BY id ORDER BY src DESC, time_updated DESC) AS rn
+), chosen AS (
+  SELECT merged.*,
+         ROW_NUMBER() OVER (
+           PARTITION BY id
+           ORDER BY source_rank DESC, time_updated DESC,
+                    time_created DESC, id ASC
+         ) AS row_number
   FROM merged
-),
-recency AS (
-  SELECT id, MAX(time_updated) AS latest_time_updated
+), recency AS (
+  SELECT id, MAX(COALESCE(time_updated, time_created)) AS latest_time
   FROM merged
   GROUP BY id
 )
-SELECT c.id, c.title, c.time_created, recency.latest_time_updated,
-       c.agent, c.model
-FROM chosen AS c
-JOIN recency ON recency.id = c.id
-WHERE c.rn = 1
-ORDER BY recency.latest_time_updated DESC, c.id ASC
+SELECT chosen.id, chosen.title, chosen.time_created,
+       recency.latest_time, chosen.agent, chosen.model
+FROM chosen
+JOIN recency ON recency.id = chosen.id
+WHERE chosen.row_number = 1
+ORDER BY recency.latest_time DESC, chosen.id ASC
 LIMIT ?;
 ```
 
-Messages for one session (v2):
+Bind one fixed metadata budget to each `substr` placeholder and a separate
+bounded page size to the final `LIMIT`; do not substitute unbounded defaults.
+For v2-only, query `session_v2` alone; for legacy-only, query `session` alone,
+each with its own `LIMIT`. The mixed CTE makes v2 metadata authoritative for
+overlapping session IDs, while `recency.latest_time` is the maximum from both
+rows. A metadata ID choice does **not** choose, deduplicate, or order message
+rows.
+
+Optional `project`/`workspace` joins are likewise session-metadata-only and may
+be used only after those tables are detected. Do not use their unverified
+columns, and do not put a message table in those joins.
+
+## Message reads and keyed merge (never raw UNION/JOIN)
+
+For a selected session, read each available message stream separately. Never
+`JOIN` or `UNION ALL` legacy chat rows with v2 chat rows. `LIMIT` and page
+parameters are mandatory in both branches; `substr` keeps the raw JSON preview
+bounded:
 
 ```sql
-SELECT seq, type, time_created, data
+-- Run only when session_message was detected.
+SELECT id, seq, type, time_created, time_updated,
+       substr(data, 1, ?) AS data_preview
 FROM session_message
 WHERE session_id = ?
 ORDER BY seq ASC, time_created ASC, id ASC
-LIMIT ?;
+LIMIT ? OFFSET ?;
 ```
-
-Legacy messages for the same session (history fill):
 
 ```sql
-SELECT m.time_created, json_extract(m.data, '$.role') AS role, m.id
-FROM message m
-WHERE m.session_id = ?
-ORDER BY m.time_created ASC, m.id ASC
-LIMIT ?;
+-- Run only when message was detected.
+SELECT id, time_created, time_updated,
+       CASE WHEN json_valid(data) THEN json_extract(data, '$.role') END AS role,
+       CASE WHEN json_valid(data)
+            THEN substr(json_extract(data, '$.text'), 1, ?)
+       END AS text_preview,
+       substr(data, 1, ?) AS data_preview
+FROM message
+WHERE session_id = ?
+ORDER BY time_created ASC, id ASC
+LIMIT ? OFFSET ?;
 ```
 
-Tool-call output (v2): from the message `data` JSON, walk
-`$.content[*]` items where `type = 'tool'` and read `state.content`; check
-`state.error` for failures.
+The agent must maintain a bounded map keyed by stable `message.id`:
 
-For metadata previews, select `substr(data, 1, ?)` and cap each rendered text
-or tool content item to a fixed character budget. Page conversation reads with
-`LIMIT ?`; never load an entire live session or emit unbounded tool output.
+1. Insert v2 rows into `v2_by_id` in their `seq/time_created/id` order.
+2. Insert legacy rows into a legacy list ordered by `time_created/id`, but keep
+   only IDs absent from `v2_by_id`. If an ID occurs in both streams, the v2
+   `session_message` row wins **even when the two JSON payloads differ**; do
+   not inspect or emit the discarded legacy payload or its parts.
+3. For each retained legacy-only ID, query its `part` rows separately and
+   reconstruct that message in `part.time_created/id` order. Bind the IDs as
+   `IN` parameters (never interpolate values), and keep the query bounded:
 
-## Message / turn structure
+   ```sql
+   -- Run only when part was detected, for a bounded page of legacy-only IDs.
+   SELECT id, message_id, time_created, time_updated,
+          substr(data, 1, ?) AS data_preview
+   FROM part
+   WHERE session_id = ?
+     AND message_id IN (?, ?)
+   ORDER BY message_id ASC, time_created ASC, id ASC
+   LIMIT ? OFFSET ?;
+   ```
 
-- A **user turn** = one `type='user'` row (v2) or legacy `role='user'`.
-- An **assistant turn** = one or more consecutive `assistant` messages
-  containing text/reasoning/tool items. Tool results are embedded in the same
-  message's `content[]`, not separate rows.
-- Parent/child: `session_v2.parent_id` non-null → subagent session.
-  `fork_session_id` + `fork_boundary` describe a fork (v2-only concept).
-- Print nothing from `reasoning` items except a length/type note unless the
-  user explicitly asks for reasoning text.
+   Generate one `?` per ID in the bounded legacy-only page (the two markers
+   above are illustrative), and bind every ID. A generated placeholder list is
+   okay only for IDs already obtained from
+   bound query results; every ID remains a bound value. If the page has no IDs,
+   skip the query. If `part` is absent, retain the legacy message's bounded
+   metadata/text only and note that parts were unavailable.
+4. Parse only bounded/validated JSON. Skip malformed rows and unknown content
+   items instead of aborting the session. For user messages, use the v2
+   `data.text` or a bounded legacy text fallback. For assistant messages,
+   collect bounded text, reasoning markers, and tool summaries. v2 tools read
+   `state.content`; legacy tools read `state.output`. Cap tool input, output,
+   errors, and all text before adding them to evidence.
+5. Merge the two retained lists with an explicit, reproducible cross-stream key;
+   do not claim that v2 is always after (or before) legacy. Keep the intrinsic
+   stream orders above, and use comparable event time for cross-stream
+   placement, with source and stream keys only as deterministic tie-breakers:
 
-## What sessions contain
+   ```text
+   v2 row key          = (event_time, 0, seq, time_created, id)
+   legacy-only row key = (event_time, 1, 0, time_created, id)
+   event_time          = time_created, or 0 when it is absent/non-numeric
+   ```
 
-Each session records a multi-turn conversation: user prompts, assistant text,
-reasoning markers, tool invocations (with input args and output content),
-token/cost usage, model/agent selection, code-change summary stats (additions,
-deletions, files), fork lineage, and compaction events.
+   Sort the final bounded page by this key. Thus equal-time v2 rows use `seq`
+   and equal-time legacy rows use `time_created/id`; rows from either source
+   can precede the other when their timestamps differ. If an implementation
+   instead emits stream pages independently, label that choice and do not
+   present it as global chronology.
 
-## Harness memory
+Because pages can overlap while the source is live, de-duplicate IDs across
+page boundaries in the same maps. Stop after a bounded page budget; do not
+promise a complete unbounded history from a live database.
 
-OpenCode reads context from these sources:
+## Conversation reconstruction and filtering
 
-- `AGENTS.md` in the project root (project instructions, injected into context)
-- `~/.config/opencode/AGENTS.md` (global instructions)
-- Project-level config under `.opencode/`
+Only `user` and `assistant` rows/legacy messages become conversation body.
+`system`, `synthetic`, `compaction`, unknown message roles/types, and legacy
+`compaction`/`step-finish` parts are metadata/noise and must not contaminate
+body text. Do not drop the session itself: a session containing only filtered
+rows still exists and contributes title/fork/recency metadata.
 
-Syke writes memory back through those surfaces only. It never opens
-`opencode.db` for writes.
+A v2 assistant can have text, reasoning, and tool items in one `content[]`.
+Unknown future item types, missing `state`, non-string text, malformed JSON,
+and unknown tool statuses are tolerated and skipped or summarized. A legacy
+assistant's body is assembled from its retained parts; text parts contribute
+text, reasoning parts contribute only a marker, tool parts contribute a
+bounded tool summary/output, and patch/file parts contribute only bounded
+metadata when useful. Empty messages after filtering are omitted from body
+content, not from session listing.
 
-## Privacy boundaries (summary)
+A non-null v2 `parent_id` marks a subagent session. `fork_session_id` and
+`fork_boundary` are v2 fork lineage; report them as bounded metadata and never
+mistake fork/system/compaction markers for user or assistant prose.
 
-- Read-only, parameterized, `LIMIT`-bounded queries against the allowlisted
-  tables only.
-- Never query the never-query list (credentials, accounts, events, share
-  secrets, pending/inbox).
-- Never emit raw reasoning blobs, full tool outputs of arbitrary length, share
-  secrets, or any row from a never-query table — truncate and summarize.
-- Never write to the opencode DB from Syke.
+## What to retain
+
+For a bounded evidence slice, retain session title/IDs, recency, agent/model,
+parent/fork lineage, user text, assistant text, reasoning markers, and concise
+bounded tool summaries. Summarize code-change counters and errors rather than
+copying large JSON. The OpenCode database remains read-only; Syke writes
+learned memory only through its normal LLM-first synthesis path.

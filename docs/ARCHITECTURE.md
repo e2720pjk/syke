@@ -43,6 +43,7 @@ Authority is split cleanly:
 **Memory is maintenance.** Beyond store and retrieve, memory needs active care: synthesis cycles, daemon-driven updates, health checks, evolution tracking. This is why agentic memory requires an agent — not just a database with an API, but an autonomous process that maintains, curates, and evolves the knowledge base.
 
 **Core principles:**
+
 - **The agent reads harness data directly** — adapter markdowns describe format and location; the agent uses bash/sqlite3 to inspect harness artifacts at synthesis time. No Python copy pipeline, no events.db staging.
 - **Evidence ≠ inference** — raw harness data (what happened) stays at the source; memories (what it means) are mutable and agent-written in syke.db
 - **The agent crawls text** — FTS5/BM25 for retrieval, LLM for understanding. No vector DB needed.
@@ -50,7 +51,7 @@ Authority is split cleanly:
 - **The map appears** — the agent builds its own world model with each use, like fog of war clearing
 - **The MEMEX is the timeline** — indexed by synthesis cycle records, it is the navigational backbone that accumulates over time
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │              Layer 1: Harness Data (at source)           │
 │              ┌──────────────────────┐                    │
@@ -106,6 +107,20 @@ Instead, each harness gets an **adapter markdown** installed at `~/.syke/adapter
 - what to look for (sessions, turns, tool calls, timestamps)
 
 The agent reads harness data directly using bash and sqlite3 during synthesis and ask.
+
+#### OpenCode read boundary (LLM-first)
+
+OpenCode is intentionally an adapter-markdown path, not a Python ingest
+parser. The shipped guide describes how the agent can inspect the live,
+WAL-aware SQLite database read-only and reason over bounded pages; Syke never
+copies OpenCode conversations into an intermediate ledger and never writes to
+OpenCode's database. Schema detection precedes every query because a source
+may be legacy-only, v2-only, or mixed. Session metadata may use v2-precedence
+and union recency, but chat rows are read separately and merged in memory by
+stable message ID (v2 wins a duplicate; legacy-only rows are reconstructed
+from their parts). The guide also defines the allowlist, privacy boundary,
+truncation, and pagination rules so raw JSON, reasoning blobs, and tool output
+do not become unbounded evidence.
 
 ### Observe Bootstrap
 
@@ -261,7 +276,7 @@ External harness sandboxes still exist, but they are downstream environment cons
 
 Human memory is associative. You don't retrieve memories by index — you follow connections. A project reminds you of a person, who reminds you of a conversation, which connects to a decision. Syke models this with explicit links — sparse, bidirectional edges with natural language reasons, implemented over SQLite.
 
-```
+```text
 ┌──────────────┐     ┌──────────────────────────┐         ┌──────────┐
 │ HARNESS DATA │     │        MEMORIES          │         │  MEMEX   │
 │──────────────│     │──────────────────────────│ routes  │──────────│
@@ -331,7 +346,7 @@ Syke's memory architecture draws from several research directions:
 
 ## File Map
 
-```
+```text
 syke/
 ├── entrypoint.py               # Click CLI group + command registration
 ├── cli_commands/               # Modular CLI command implementations
@@ -437,7 +452,7 @@ Syke now supports one agent runtime for synthesis and ask operations: Pi. `pi_ru
 
 The Pi dispatcher is the routing layer:
 
-```
+```text
 CLI / Sync / Daemon / Replay
         ↓
    ask:        pi_runtime.run_ask()
@@ -475,7 +490,7 @@ Anything outside those surfaces is out of scope for the current runtime.
 
 Syke uses Pi as the canonical runtime and no longer keeps a separate provider registry or auth store.
 
-```
+```text
                     ┌────────────────────┐
                     │   Pi Coding Agent  │
                     │  RPC + workspace   │

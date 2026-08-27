@@ -24,9 +24,11 @@ def _sha256_text(text: str) -> str:
 # still be able to upgrade an untouched older seed in place. Hashes are added
 # here (append-only) whenever a seed ships; never remove an old entry.
 KNOWN_SEED_HASHES: dict[str, tuple[str, ...]] = {
-    # adapter-opencode.md pre-2.0 (single-schema legacy-only version)
+    # adapter-opencode.md pre-2.0 (single-schema legacy-only version) and the
+    # b731d69 mixed-schema seed; both are untouched revisions safe to upgrade.
     "opencode": (
         "9180c5508e6b5cca8aca7b1ab9750fe9062f8a98b3cb04f258291b6bf5804497",
+        "df68b53e8325e9ccb1b6a0c1ece24d2782c6bda1af4f03c7894b42e277e2f32b",
     ),
 }
 

@@ -7,19 +7,21 @@ This document only covers the config model that actually exists in `syke/config_
 ## OpenCode adapter (not a config section)
 
 OpenCode support is catalog- and seed-driven, not configured by a new TOML
-section. The adapter revision supports the legacy `session/message/part`
+section. The LLM-first adapter guide supports the legacy `session/message/part`
 schema and OpenCode 2.0's `session_v2/session_message` schema in the live
-WAL-mode DB at `~/.local/share/opencode/opencode.db`. Discovery matches only
-`opencode*.db` (never `-wal`/`-shm`), opens read-only with `mode=ro` and a busy
-timeout, and deduplicates overlapping IDs with v2 authoritative while taking
-recency from the union. Queries are bounded, parameterized, and restricted to
-session/message/project/workspace tables; credentials, accounts, events,
-pending/inbox, and share secrets are never queried; only the allowlisted
-`session_v2`, `session_message`, `session`, `message`, `part`, `project`, and
-`workspace` tables are eligible. The deployed seed upgrades
-only when its previous hash is known; customized adapters are preserved and
-repair is manual via the seed review or deleting the file and rerunning
-`syke connect`.
+WAL-mode DB at `~/.local/share/opencode/opencode.db`; there is no Python
+OpenCode ingest parser. Discovery matches only `opencode*.db` (never
+`-wal`/`-shm`), opens read-only with `mode=ro` and a busy timeout (never
+`immutable=1`), and detects table presence before each schema-specific query.
+Session metadata uses v2 precedence for duplicate IDs and union recency; chat
+rows are read separately and keyed by stable message ID, with v2 winning and
+legacy-only parts reconstructed. Queries are bounded, parameterized, and
+truncated, and restricted to the allowlisted `session_v2`, `session_message`,
+`session`, `message`, `part`, `project`, and `workspace` tables; credentials,
+accounts, events, pending/inbox, and share secrets are never queried. The
+deployed seed upgrades only when its previous hash is known; customized
+adapters are preserved and repair is manual via the seed review or deleting the
+file and rerunning `syke connect`.
 
 ---
 
@@ -72,7 +74,7 @@ syke config path
 ## Top-Level Keys
 
 | Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `user` | `string` | `""` | Default user ID; resolves to system username if empty | `SYKE_USER` |
 | `timezone` | `string` | `"auto"` | Timezone mode for rendering/parsing | `SYKE_TIMEZONE` |
 
@@ -81,7 +83,7 @@ syke config path
 ## `[synthesis]`
 
 | Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `threshold` | `int` | `5` | Legacy config key (synthesis always runs; the agent decides via temporal context whether anything warrants updating) | `SYKE_SYNC_THRESHOLD` |
 | `thinking_level` | `string` | `"medium"` | Pi thinking level written to workspace settings | `SYKE_SYNC_THINKING_LEVEL` |
 | `timeout` | `int` | `600` | Wall-clock timeout in seconds | `SYKE_SYNC_TIMEOUT` |
@@ -92,7 +94,7 @@ syke config path
 ## `[daemon]`
 
 | Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `interval` | `int` | `900` | Loop interval in seconds | `SYKE_DAEMON_INTERVAL` |
 
 ---
@@ -100,7 +102,7 @@ syke config path
 ## `[ask]`
 
 | Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `timeout` | `int` | `600` | Ask timeout in seconds | `SYKE_ASK_TIMEOUT` |
 | `max_parallel` | `int` | `8` | Max concurrent daemon-owned temporary ask workers when the warm runtime is busy | `SYKE_MAX_PARALLEL_ASKS` |
 
@@ -109,20 +111,20 @@ syke config path
 ## `[paths]`
 
 | Key | Type | Default | Meaning | Env override |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `data_dir` | `string` | `"~/.syke/data"` | Legacy config key (flat workspace model means `user_data_dir()` returns `~/.syke/` directly; this key is not used for path resolution) | `SYKE_DATA_DIR` |
 
 ### `[paths.sources]`
 
 | Key | Type | Default | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `claude_code` | `string` | `"~/.claude"` | Claude Code source root |
 | `codex` | `string` | `"~/.codex"` | Codex source root |
 
 ### `[paths.distribution]`
 
 | Key | Type | Default | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `claude_md` | `string` | `"~/.claude/CLAUDE.md"` | Retained only for deferred harness-specific memex injection work |
 | `skills_dirs` | `array[string]` | `.agents`, Claude, Gemini, Hermes, Codex, Cursor, OpenCode skill dirs | Capability installation targets |
 
@@ -201,7 +203,7 @@ timeout = 600
 These env vars are not config-file keys but are read by the runtime:
 
 | Env Var | Default | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | `SYKE_PROVIDER` | — | Per-process provider override |
 | `SYKE_DB` | — | Override per-user DB path (testing/custom setups) |
 | `SYKE_WORKSPACE_ROOT` | `~/.syke` | Override Pi workspace directory |

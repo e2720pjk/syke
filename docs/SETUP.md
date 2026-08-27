@@ -42,8 +42,10 @@ A healthy first run should end with:
 - `~/.syke/syke.db` initialized
 - `~/.syke/MEMEX.md` available
 - adapter markdowns installed under `~/.syke/adapters/`
-- OpenCode adapter revision covers legacy and v2 schemas, uses v2 as the
-  duplicate-session authority, and excludes live `-wal`/`-shm` sidecars
+- OpenCode adapter revision is an LLM-first, schema-detected guide for legacy
+  and v2 tables, uses v2 for duplicate session metadata, keyed-merges messages
+  by stable ID (v2 wins), reconstructs legacy-only parts, and excludes live
+  `-wal`/`-shm` sidecars
 - background service install either confirmed or clearly skipped/explained
 - local timeline available through `syke web`
 
@@ -237,15 +239,21 @@ Notes:
 ### OpenCode 2.0 read boundary
 
 OpenCode stores a live WAL-mode database at
-`~/.local/share/opencode/opencode.db`. Syke's adapter reads it with SQLite URI
-`mode=ro` and a busy timeout; it must not use `immutable=1`. It reads only the
-allowlisted session/project/workspace tables, never credentials, accounts,
+`~/.local/share/opencode/opencode.db`. Syke's adapter is a guide for the
+LLM-first read path, not a Python ingest parser: it reads with SQLite URI
+`mode=ro` and a busy timeout, and must not use `immutable=1`. It detects table
+presence before issuing queries, reads only the allowlisted
+session/project/workspace tables, and never reads credentials, accounts,
 events, pending/inbox, or share-secret tables. Reads are parameterized and
-`LIMIT`-bounded, conversation text/tool output is truncated before display,
-and reasoning blobs are summarized rather than emitted. Legacy rows and
-`session_v2` rows coexist; v2 wins duplicate IDs while recency uses the union
-of both tables.
+`LIMIT`-bounded; raw JSON, conversation text, and tool output are paged and
+truncated, while reasoning blobs are summarized rather than emitted.
 
+Legacy `session/message/part` and v2 `session_v2/session_message` streams may
+coexist. Session metadata uses v2 precedence plus union recency, but chat rows
+are never cross-joined or raw-unioned: the agent reads each stream separately,
+keys by stable message ID (v2 wins duplicates), and reads parts only for
+legacy-only messages. Cross-stream ordering uses an explicit reproducible key;
+it does not assume that one schema always follows the other.
 
 ## What Setup Writes
 

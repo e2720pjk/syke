@@ -267,9 +267,7 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
         from syke.runtime.workspace import WORKSPACE_ROOT
 
         repairs = customized_adapter_hints(WORKSPACE_ROOT)
-        repair_detail = "; ".join(
-            f"{result.source}: {result.detail}" for result in repairs
-        )
+        repair_detail = "; ".join(f"{result.source}: {result.detail}" for result in repairs)
         _add_check(
             "adapter_guides",
             "Adapter guides",
