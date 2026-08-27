@@ -58,8 +58,11 @@ _CATALOG: tuple[SourceSpec, ...] = (
         discover=DiscoverConfig(
             roots=[
                 DiscoverRoot(
+                    # opencode*.db keeps the include pattern aligned with the
+                    # adapter markdown regex ^opencode.*\.db$ and
+                    # inherently excludes WAL/SHM sidecars (*.db-wal/*.db-shm).
                     path="~/.local/share/opencode",
-                    include=["*.db", "*.sqlite"],
+                    include=["opencode*.db"],
                     priority=20,
                 )
             ]

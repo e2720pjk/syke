@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-import click
+import click  # pyright: ignore[reportMissingImports]
 
 from syke.cli_support.context import observe_registry
 from syke.cli_support.daemon_state import daemon_payload
@@ -123,7 +123,7 @@ def setup_source_inventory(user_id: str) -> list[dict[str, object]]:
     sources.sort(
         key=lambda item: (
             not bool(item["detected"]),
-            -(item["latest_mtime"] or 0.0),
+            -(cast(float | None, item["latest_mtime"]) or 0.0),
             cast(str, item["source"]),
         )
     )
@@ -283,6 +283,8 @@ def _build_next_steps(provider: dict[str, object], daemon: dict[str, object]) ->
 
 def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> dict[str, object]:
     from syke.daemon.ipc import daemon_runtime_status
+    from syke.observe.bootstrap import customized_adapter_hints
+    from syke.runtime.workspace import WORKSPACE_ROOT
     from syke.source_selection import get_selected_sources
 
     provider = provider_payload(cli_provider)
@@ -297,6 +299,10 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
         user_id=user_id,
         daemon=daemon,
     )
+    adapter_repairs = [
+        {"source": result.source, "detail": result.detail}
+        for result in customized_adapter_hints(WORKSPACE_ROOT)
+    ]
 
     detected_sources = [item["source"] for item in sources if item["detected"]]
     proposed_actions: list[dict[str, object]] = [
@@ -373,6 +379,7 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
         "selected_sources": list(selected_sources) if selected_sources is not None else None,
         "trust": trust,
         "setup_targets": setup_targets,
+        "adapter_repairs": adapter_repairs,
         "runtime": runtime,
         "daemon": daemon,
         "daemon_runtime": warm_runtime,
@@ -437,6 +444,13 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
             console.print(f"    [dim]{remediation}[/dim]")
         else:
             console.print("  [yellow]✗[/yellow] background service: blocked")
+
+    adapter_repairs = cast(list[dict[str, object]], info.get("adapter_repairs") or [])
+    if adapter_repairs:
+        console.print()
+        console.print("  [yellow]! adapter guides need manual repair:[/yellow]")
+        for repair in adapter_repairs:
+            console.print(f"    {repair['source']}: {repair['detail']}")
 
     # What setup will do — one paragraph
     console.print()

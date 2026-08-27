@@ -116,7 +116,7 @@ currently include:
 
 - Claude Code
 - Codex
-- OpenCode
+- OpenCode (legacy + OpenCode 2.0 v2 SQLite schemas)
 - Cursor
 - GitHub Copilot
 - Antigravity
@@ -124,6 +124,12 @@ currently include:
 - Gemini CLI
 
 See [PLATFORMS.md](PLATFORMS.md) for exact artifact paths and current status.
+
+OpenCode discovery reads only `~/.local/share/opencode/opencode*.db`. The adapter
+opens the live WAL-mode database read-only (never `immutable=1`), excludes
+`-wal`/`-shm` sidecars, and deduplicates overlapping legacy/v2 sessions with v2
+metadata authoritative. Existing customized adapter guides are never overwritten;
+run `syke connect` to see a manual repair hint.
 
 ## How Agents Use Syke
 

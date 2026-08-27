@@ -42,6 +42,8 @@ A healthy first run should end with:
 - `~/.syke/syke.db` initialized
 - `~/.syke/MEMEX.md` available
 - adapter markdowns installed under `~/.syke/adapters/`
+- OpenCode adapter revision covers legacy and v2 schemas, uses v2 as the
+  duplicate-session authority, and excludes live `-wal`/`-shm` sidecars
 - background service install either confirmed or clearly skipped/explained
 - local timeline available through `syke web`
 
@@ -227,6 +229,23 @@ Notes:
 
 - During setup, explicit `--source` values must be detected in that run or setup exits with a usage error.
 - The `--source` option is intentionally hidden from `--help` output but is part of the supported setup/sync automation contract.
+- Adapter seeds are upgraded only when the deployed file matches a known
+  untouched seed hash. If an adapter is customized, setup preserves it and
+  reports the path plus a manual repair step (review the shipped seed, or
+  delete the file and rerun `syke connect`); it never overwrites user edits.
+
+### OpenCode 2.0 read boundary
+
+OpenCode stores a live WAL-mode database at
+`~/.local/share/opencode/opencode.db`. Syke's adapter reads it with SQLite URI
+`mode=ro` and a busy timeout; it must not use `immutable=1`. It reads only the
+allowlisted session/project/workspace tables, never credentials, accounts,
+events, pending/inbox, or share-secret tables. Reads are parameterized and
+`LIMIT`-bounded, conversation text/tool output is truncated before display,
+and reasoning blobs are summarized rather than emitted. Legacy rows and
+`session_v2` rows coexist; v2 wins duplicate IDs while recency uses the union
+of both tables.
+
 
 ## What Setup Writes
 

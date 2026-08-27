@@ -262,6 +262,26 @@ def build_doctor_payload(ctx, *, network: bool) -> dict[str, object]:
     except Exception:
         pass
 
+    try:
+        from syke.observe.bootstrap import customized_adapter_hints
+        from syke.runtime.workspace import WORKSPACE_ROOT
+
+        repairs = customized_adapter_hints(WORKSPACE_ROOT)
+        repair_detail = "; ".join(
+            f"{result.source}: {result.detail}" for result in repairs
+        )
+        _add_check(
+            "adapter_guides",
+            "Adapter guides",
+            True,
+            "all deployed adapter seeds current"
+            if not repairs
+            else f"manual repair needed — {repair_detail}",
+            repairs=[{"source": result.source, "detail": result.detail} for result in repairs],
+        )
+    except Exception:
+        pass
+
     if has_db:
         db = get_db(user_id)
         try:
@@ -361,6 +381,7 @@ def render_doctor_payload(payload: dict[str, object], *, network: bool) -> None:
         "trace_store_runtime",
         "file_logging",
         "harness_access",
+        "adapter_guides",
     ):
         check = checks.get(key)
         if check:

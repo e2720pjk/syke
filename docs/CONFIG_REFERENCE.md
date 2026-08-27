@@ -4,6 +4,23 @@ Authoritative reference for `~/.syke/config.toml` in the current runtime.
 
 This document only covers the config model that actually exists in `syke/config_file.py` and `syke/config.py`.
 
+## OpenCode adapter (not a config section)
+
+OpenCode support is catalog- and seed-driven, not configured by a new TOML
+section. The adapter revision supports the legacy `session/message/part`
+schema and OpenCode 2.0's `session_v2/session_message` schema in the live
+WAL-mode DB at `~/.local/share/opencode/opencode.db`. Discovery matches only
+`opencode*.db` (never `-wal`/`-shm`), opens read-only with `mode=ro` and a busy
+timeout, and deduplicates overlapping IDs with v2 authoritative while taking
+recency from the union. Queries are bounded, parameterized, and restricted to
+session/message/project/workspace tables; credentials, accounts, events,
+pending/inbox, and share secrets are never queried; only the allowlisted
+`session_v2`, `session_message`, `session`, `message`, `part`, `project`, and
+`workspace` tables are eligible. The deployed seed upgrades
+only when its previous hash is known; customized adapters are preserved and
+repair is manual via the seed review or deleting the file and rerunning
+`syke connect`.
+
 ---
 
 ## Precedence

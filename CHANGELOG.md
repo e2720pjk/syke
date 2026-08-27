@@ -4,6 +4,16 @@ All notable changes to Syke are documented here.
 
 ## [Unreleased]
 
+- Added OpenCode 2.0 adapter support for the coexisting legacy and v2 SQLite
+  schemas. `session_v2`/`session_message` metadata is authoritative for duplicate
+  IDs, while recency is calculated across both schemas.
+- Hardened OpenCode discovery and read guidance for live WAL databases: only
+  `opencode*.db` is discovered, `-wal`/`-shm` sidecars are excluded, and reads
+  are read-only, parameterized, bounded, and privacy-limited.
+- Adapter bootstrap now upgrades untouched known seed revisions without
+  overwriting user-customized adapter files; customized files receive a manual
+  repair hint.
+
 ## [0.5.10] - 2026-06-06
 
 Patch - daemon-owned concurrent asks and release proof.
