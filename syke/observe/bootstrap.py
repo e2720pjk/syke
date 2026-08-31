@@ -29,6 +29,8 @@ KNOWN_SEED_HASHES: dict[str, tuple[str, ...]] = {
     "opencode": (
         "9180c5508e6b5cca8aca7b1ab9750fe9062f8a98b3cb04f258291b6bf5804497",
         "df68b53e8325e9ccb1b6a0c1ece24d2782c6bda1af4f03c7894b42e277e2f32b",
+        # d4923e9 mixed-schema seed; upgrade it to the field-level v2 guide.
+        "2c0ff53e87f1231bb72dc8e0300f15f6e1e8888d8d0ed5d52694d1f30431ede8",
     ),
 }
 

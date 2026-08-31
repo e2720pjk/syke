@@ -127,8 +127,11 @@ observed types include `user`, `assistant`, `synthetic`, `system`, and
 - A content item `{type: "text", text}` is assistant text.
 - `{type: "reasoning", ...}` is a reasoning marker only; do not print its
   payload.
-- `{type: "tool", state: {...}}` is a tool call. Its output is in
-  `state.content`, and failures may have `state.error`.
+- `{type: "tool", state: {...}}` is a tool call. Its `state.content[]` is an
+  array of result blocks, not a scalar string: retain bounded `{type: "text",
+  text}` blocks and, when useful, bounded `{type: "file", uri, mime, name}`
+  metadata. A failed tool has an error object; extract only
+  `state.error.message`, never the whole error object.
 - Tool `state.status` is normally **`completed`** or **`error`**. Preserve and
   label an unknown future status; never normalize it to a known terminal state,
   and never infer semantics for a value not observed in this schema.
@@ -198,11 +201,39 @@ LIMIT ?;
 
 Bind one fixed metadata budget to each `substr` placeholder and a separate
 bounded page size to the final `LIMIT`; do not substitute unbounded defaults.
-For v2-only, query `session_v2` alone; for legacy-only, query `session` alone,
-each with its own `LIMIT`. The mixed CTE makes v2 metadata authoritative for
-overlapping session IDs, while `recency.latest_time` is the maximum from both
-rows. A metadata ID choice does **not** choose, deduplicate, or order message
-rows.
+For a v2-only database, keep the same field bounds rather than selecting raw
+metadata:
+
+```sql
+SELECT id,
+       substr(title, 1, ?) AS title,
+       time_created,
+       time_updated,
+       substr(agent, 1, ?) AS agent,
+       substr(model, 1, ?) AS model
+FROM session_v2
+ORDER BY time_updated DESC, id ASC
+LIMIT ?;
+```
+
+Use the equivalent bounded projection from `session` for a legacy-only
+database:
+
+```sql
+SELECT id,
+       substr(title, 1, ?) AS title,
+       time_created,
+       time_updated,
+       substr(agent, 1, ?) AS agent,
+       substr(model, 1, ?) AS model
+FROM session
+ORDER BY time_updated DESC, id ASC
+LIMIT ?;
+```
+
+The mixed CTE makes v2 metadata authoritative for overlapping session IDs,
+while `recency.latest_time` is the maximum from both rows. A metadata ID choice
+does **not** choose, deduplicate, or order message rows.
 
 Optional `project`/`workspace` joins are likewise session-metadata-only and may
 be used only after those tables are detected. Do not use their unverified
@@ -212,18 +243,141 @@ columns, and do not put a message table in those joins.
 
 For a selected session, read each available message stream separately. Never
 `JOIN` or `UNION ALL` legacy chat rows with v2 chat rows. `LIMIT` and page
-parameters are mandatory in both branches; `substr` keeps the raw JSON preview
-bounded:
+parameters are mandatory in every row query.
+
+### v2 field-level JSON extraction
+
+**Never select `substr(data, 1, ?)` as `data_preview` and then parse that
+preview as v2 JSON.** A valid row can put large metadata, snapshots, or tool
+results before `content[]`; truncating the complete document makes the entire
+row look malformed and drops it. Instead, use SQLite JSON1 to validate the
+row, enumerate arrays, and cap each extracted scalar field independently.
+
+First read bounded row identity and the v2 user text field. The `json_valid`
+branch keeps malformed rows non-fatal:
 
 ```sql
 -- Run only when session_message was detected.
 SELECT id, seq, type, time_created, time_updated,
-       substr(data, 1, ?) AS data_preview
+       CASE WHEN json_valid(data) THEN
+              CASE WHEN json_type(data, '$.text') = 'text'
+                   THEN substr(json_extract(data, '$.text'), 1, ?)
+              END
+       END AS text_preview
 FROM session_message
 WHERE session_id = ?
 ORDER BY seq ASC, time_created ASC, id ASC
 LIMIT ? OFFSET ?;
 ```
+
+For assistant `data.content[]`, enumerate one outer item at a time. The ID
+markers below are illustrative; generate one bound `?` per ID returned by the
+bounded row query. Do not select the full `data.content` array:
+
+```sql
+SELECT message.id,
+       CAST(content.key AS INTEGER) AS content_index,
+       CASE WHEN content.type = 'object'
+            THEN json_extract(content.value, '$.type')
+       END AS content_type,
+       CASE WHEN content.type = 'object' THEN
+              CASE WHEN json_extract(content.value, '$.type') = 'text'
+                   AND json_type(content.value, '$.text') = 'text'
+                   THEN substr(json_extract(content.value, '$.text'), 1, ?)
+              END
+       END AS text_preview,
+       CASE WHEN content.type = 'object' THEN
+              CASE WHEN json_extract(content.value, '$.type') = 'tool'
+                   AND json_type(content.value, '$.state.status') = 'text'
+                   THEN substr(json_extract(content.value, '$.state.status'), 1, ?)
+              END
+       END AS tool_status,
+       CASE WHEN content.type = 'object' THEN
+              CASE WHEN json_extract(content.value, '$.type') = 'tool'
+                   AND json_type(content.value, '$.state.error.message') = 'text'
+                   THEN substr(
+                     json_extract(content.value, '$.state.error.message'), 1, ?
+                   )
+              END
+       END AS error_message
+FROM session_message AS message
+JOIN json_each(
+  CASE WHEN json_valid(message.data) THEN message.data ELSE '{}' END,
+  '$.content'
+) AS content
+WHERE message.session_id = ?
+  AND message.id IN (?, ?)
+ORDER BY message.id ASC, CAST(content.key AS INTEGER) ASC
+LIMIT ?;
+```
+
+For each outer tool item, enumerate `state.content[]` separately. Retain only
+bounded text blocks and the bounded file metadata fields shown here; skip
+unknown block types and missing/non-string fields:
+
+```sql
+SELECT message.id,
+       CAST(content.key AS INTEGER) AS content_index,
+       CAST(state_content.key AS INTEGER) AS state_content_index,
+       CASE WHEN state_content.type = 'object'
+            THEN json_extract(state_content.value, '$.type')
+       END AS state_content_type,
+       CASE WHEN state_content.type = 'object' THEN
+              CASE WHEN json_extract(state_content.value, '$.type') = 'text'
+                   AND json_type(state_content.value, '$.text') = 'text'
+                   THEN substr(json_extract(state_content.value, '$.text'), 1, ?)
+              END
+       END AS state_text_preview,
+       CASE WHEN state_content.type = 'object' THEN
+              CASE WHEN json_extract(state_content.value, '$.type') = 'file'
+                   AND json_type(state_content.value, '$.uri') = 'text'
+                   THEN substr(json_extract(state_content.value, '$.uri'), 1, ?)
+              END
+       END AS uri_preview,
+       CASE WHEN state_content.type = 'object' THEN
+              CASE WHEN json_extract(state_content.value, '$.type') = 'file'
+                   AND json_type(state_content.value, '$.mime') = 'text'
+                   THEN substr(json_extract(state_content.value, '$.mime'), 1, ?)
+              END
+       END AS mime_preview,
+       CASE WHEN state_content.type = 'object' THEN
+              CASE WHEN json_extract(state_content.value, '$.type') = 'file'
+                   AND json_type(state_content.value, '$.name') = 'text'
+                   THEN substr(json_extract(state_content.value, '$.name'), 1, ?)
+              END
+       END AS name_preview
+FROM session_message AS message
+JOIN json_each(
+  CASE WHEN json_valid(message.data) THEN message.data ELSE '{}' END,
+  '$.content'
+) AS content
+JOIN json_each(
+  CASE
+    WHEN content.type = 'object' THEN
+      CASE WHEN json_extract(content.value, '$.type') = 'tool'
+           THEN content.value ELSE '{}' END
+    ELSE '{}'
+  END,
+  '$.state.content'
+) AS state_content
+WHERE message.session_id = ?
+  AND message.id IN (?, ?)
+ORDER BY message.id ASC,
+         CAST(content.key AS INTEGER) ASC,
+         CAST(state_content.key AS INTEGER) ASC
+LIMIT ?;
+```
+
+Bind one fixed text/file metadata budget to every `substr` placeholder and a
+separate bounded item budget to each JSON-array query. Group
+these extracted rows by `message.id` and the two array indexes, preserving
+array order. `json_each` is an extractor, not permission to emit an
+unbounded JSON value. The v2 row page still stops at its bounded `LIMIT` /
+`OFFSET` budget, and malformed rows or unknown items are skipped.
+
+### Legacy field reads
+
+The legacy fallback keeps its separate bounded preview/part recipe:
 
 ```sql
 -- Run only when message was detected.

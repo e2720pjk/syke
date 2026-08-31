@@ -9,9 +9,12 @@ from typing import Any
 
 from syke.observe import bootstrap
 from syke.observe.catalog import get_source, iter_discovered_files
+from syke.runtime import workspace
+from syke.runtime.psyche_md import build_prompt
 
 _MAX_RAW_JSON = 4096
 _MAX_TEXT = 64
+_MAX_CONTENT_ITEMS = 256
 _PAGE_SIZE = 2
 _ALLOWED_TABLES = {
     "session_v2",
@@ -181,7 +184,15 @@ def _make_opencode_fixture() -> sqlite3.Connection:
                                 "state": {
                                     "status": "completed",
                                     "input": {"path": "src/example.py"},
-                                    "content": "x" * 200,
+                                    "content": [
+                                        {"type": "text", "text": "x" * 200},
+                                        {
+                                            "type": "file",
+                                            "uri": "file:///tmp/example.py",
+                                            "mime": "text/x-python",
+                                            "name": "example.py",
+                                        },
+                                    ],
                                     "metadata": {"duration_ms": 2},
                                 },
                             },
@@ -205,8 +216,11 @@ def _make_opencode_fixture() -> sqlite3.Connection:
                                 "state": {
                                     "status": "error",
                                     "input": {"command": "false"},
-                                    "content": "bounded failed output",
-                                    "error": "anonymous failure",
+                                    "content": [{"type": "text", "text": "bounded failed output"}],
+                                    "error": {
+                                        "type": "unknown",
+                                        "message": "anonymous failure",
+                                    },
                                 },
                             }
                         ]
@@ -227,7 +241,7 @@ def _make_opencode_fixture() -> sqlite3.Connection:
                                 "type": "tool",
                                 "state": {
                                     "status": "future-status",
-                                    "content": "future output",
+                                    "content": [{"type": "text", "text": "future output"}],
                                 },
                             }
                         ]
@@ -434,10 +448,14 @@ def _read_metadata(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
         rows = conn.execute(
             """
             WITH merged AS (
-              SELECT id, title, time_created, time_updated, agent, model, 2 AS source_rank
+              SELECT id, substr(title, 1, ?) AS title, time_created, time_updated,
+                     substr(agent, 1, ?) AS agent, substr(model, 1, ?) AS model,
+                     2 AS source_rank
               FROM session_v2
               UNION ALL
-              SELECT id, title, time_created, time_updated, agent, model, 1 AS source_rank
+              SELECT id, substr(title, 1, ?) AS title, time_created, time_updated,
+                     substr(agent, 1, ?) AS agent, substr(model, 1, ?) AS model,
+                     1 AS source_rank
               FROM session
             ), chosen AS (
               SELECT merged.*,
@@ -460,20 +478,22 @@ def _read_metadata(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
             ORDER BY recency.latest_time DESC, chosen.id ASC
             LIMIT ?
             """,
-            (100,),
+            (_MAX_TEXT, _MAX_TEXT, _MAX_TEXT, _MAX_TEXT, _MAX_TEXT, _MAX_TEXT, 100),
         ).fetchall()
         return rows
     if "session_v2" in tables:
         return conn.execute(
-            "SELECT id, title, time_created, time_updated, agent, model "
+            "SELECT id, substr(title, 1, ?) AS title, time_created, time_updated, "
+            "substr(agent, 1, ?) AS agent, substr(model, 1, ?) AS model "
             "FROM session_v2 ORDER BY time_updated DESC, id ASC LIMIT ?",
-            (100,),
+            (_MAX_TEXT, _MAX_TEXT, _MAX_TEXT, 100),
         ).fetchall()
     if "session" in tables:
         return conn.execute(
-            "SELECT id, title, time_created, time_updated, agent, model "
+            "SELECT id, substr(title, 1, ?) AS title, time_created, time_updated, "
+            "substr(agent, 1, ?) AS agent, substr(model, 1, ?) AS model "
             "FROM session ORDER BY time_updated DESC, id ASC LIMIT ?",
-            (100,),
+            (_MAX_TEXT, _MAX_TEXT, _MAX_TEXT, 100),
         ).fetchall()
     return []
 
@@ -497,18 +517,205 @@ def _parse_json(raw_data: Any) -> dict[str, Any] | None:
 def _read_v2_rows(
     conn: sqlite3.Connection, session_id: str, *, page_size: int = _PAGE_SIZE
 ) -> list[tuple[Any, ...]]:
+    """Read v2 rows with bounded field-level JSON extraction.
+
+    The reference contract must not truncate ``data`` before parsing: a valid
+    row can contain large metadata or tool payloads before the conversation
+    fields we need. SQLite JSON1 extracts only bounded scalar fields and array
+    items, leaving malformed rows harmlessly empty.
+    """
     if "session_message" not in _detect_tables(conn):
         return []
     rows: list[tuple[Any, ...]] = []
     offset = 0
     while True:
         page = conn.execute(
-            "SELECT id, seq, type, time_created, time_updated, substr(data, 1, ?) "
-            "FROM session_message WHERE session_id = ? "
-            "ORDER BY seq ASC, time_created ASC, id ASC LIMIT ? OFFSET ?",
-            (_MAX_RAW_JSON, session_id, page_size, offset),
+            """
+            SELECT id, seq, type, time_created, time_updated,
+                   CASE
+                     WHEN json_valid(data) THEN
+                       CASE WHEN json_type(data, '$.text') = 'text'
+                            THEN substr(json_extract(data, '$.text'), 1, ?)
+                       END
+                   END AS text_preview
+            FROM session_message
+            WHERE session_id = ?
+            ORDER BY seq ASC, time_created ASC, id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (_MAX_TEXT, session_id, page_size, offset),
         ).fetchall()
-        rows.extend(page)
+        if not page:
+            return rows
+
+        message_ids = [row[0] for row in page]
+        placeholders = ", ".join("?" for _ in message_ids)
+        outer_content_rows = conn.execute(
+            f"""
+            SELECT message.id,
+                   CAST(content.key AS INTEGER) AS content_index,
+                   CASE WHEN content.type = 'object'
+                        THEN json_extract(content.value, '$.type')
+                   END AS content_type,
+                   CASE WHEN content.type = 'object' THEN
+                          CASE WHEN json_extract(content.value, '$.type') = 'text' THEN
+                            CASE WHEN json_type(content.value, '$.text') = 'text'
+                                 THEN substr(json_extract(content.value, '$.text'), 1, ?)
+                            END
+                          END
+                   END AS text_preview,
+                   CASE WHEN content.type = 'object' THEN
+                          CASE WHEN json_extract(content.value, '$.type') = 'tool' THEN
+                            CASE WHEN json_type(content.value, '$.state.status') = 'text'
+                                 THEN substr(json_extract(content.value, '$.state.status'), 1, ?)
+                            END
+                          END
+                   END AS tool_status,
+                   CASE WHEN content.type = 'object' THEN
+                          CASE WHEN json_extract(content.value, '$.type') = 'tool' THEN
+                            CASE WHEN json_type(content.value, '$.state.error.message') = 'text'
+                                 THEN substr(
+                                   json_extract(content.value, '$.state.error.message'), 1, ?
+                                 )
+                            END
+                          END
+                   END AS error_message
+            FROM session_message AS message
+            JOIN json_each(
+              CASE WHEN json_valid(message.data) THEN message.data ELSE '{{}}' END,
+              '$.content'
+            ) AS content
+            WHERE message.session_id = ?
+              AND message.id IN ({placeholders})
+            ORDER BY message.id ASC, CAST(content.key AS INTEGER) ASC
+            LIMIT ?
+            """,
+            (_MAX_TEXT, _MAX_TEXT, _MAX_TEXT, session_id, *message_ids, _MAX_CONTENT_ITEMS),
+        ).fetchall()
+
+        nested_content_rows = conn.execute(
+            f"""
+            SELECT message.id,
+                   CAST(content.key AS INTEGER) AS content_index,
+                   CAST(state_content.key AS INTEGER) AS state_content_index,
+                   CASE WHEN state_content.type = 'object'
+                        THEN json_extract(state_content.value, '$.type')
+                   END AS state_content_type,
+                   CASE WHEN state_content.type = 'object' THEN
+                          CASE WHEN json_extract(state_content.value, '$.type') = 'text' THEN
+                            CASE WHEN json_type(state_content.value, '$.text') = 'text'
+                                 THEN substr(json_extract(state_content.value, '$.text'), 1, ?)
+                            END
+                          END
+                   END AS text_preview,
+                   CASE WHEN state_content.type = 'object' THEN
+                          CASE WHEN json_extract(state_content.value, '$.type') = 'file' THEN
+                            CASE WHEN json_type(state_content.value, '$.uri') = 'text'
+                                 THEN substr(json_extract(state_content.value, '$.uri'), 1, ?)
+                            END
+                          END
+                   END AS uri_preview,
+                   CASE WHEN state_content.type = 'object' THEN
+                          CASE WHEN json_extract(state_content.value, '$.type') = 'file' THEN
+                            CASE WHEN json_type(state_content.value, '$.mime') = 'text'
+                                 THEN substr(json_extract(state_content.value, '$.mime'), 1, ?)
+                            END
+                          END
+                   END AS mime_preview,
+                   CASE WHEN state_content.type = 'object' THEN
+                          CASE WHEN json_extract(state_content.value, '$.type') = 'file' THEN
+                            CASE WHEN json_type(state_content.value, '$.name') = 'text'
+                                 THEN substr(json_extract(state_content.value, '$.name'), 1, ?)
+                            END
+                          END
+                   END AS name_preview
+            FROM session_message AS message
+            JOIN json_each(
+              CASE WHEN json_valid(message.data) THEN message.data ELSE '{{}}' END,
+              '$.content'
+            ) AS content
+            JOIN json_each(
+              CASE
+                WHEN content.type = 'object' THEN
+                  CASE WHEN json_extract(content.value, '$.type') = 'tool'
+                       THEN content.value ELSE '{{}}' END
+                ELSE '{{}}'
+              END,
+              '$.state.content'
+            ) AS state_content
+            WHERE message.session_id = ?
+              AND message.id IN ({placeholders})
+            ORDER BY message.id ASC,
+                     CAST(content.key AS INTEGER) ASC,
+                     CAST(state_content.key AS INTEGER) ASC
+            LIMIT ?
+            """,
+            (
+                _MAX_TEXT,
+                _MAX_TEXT,
+                _MAX_TEXT,
+                _MAX_TEXT,
+                session_id,
+                *message_ids,
+                _MAX_CONTENT_ITEMS,
+            ),
+        ).fetchall()
+
+        content_by_message: dict[str, dict[int, dict[str, Any]]] = {}
+        for (
+            message_id,
+            content_index,
+            content_type,
+            text_preview,
+            tool_status,
+            error_message,
+        ) in outer_content_rows:
+            item: dict[str, Any] = {"type": content_type, "text": text_preview}
+            if content_type == "tool":
+                item.update(
+                    {
+                        "status": tool_status,
+                        "error": error_message,
+                        "state_content": [],
+                    }
+                )
+            content_by_message.setdefault(message_id, {})[content_index] = item
+
+        for (
+            message_id,
+            content_index,
+            _state_content_index,
+            state_content_type,
+            text_preview,
+            uri_preview,
+            mime_preview,
+            name_preview,
+        ) in nested_content_rows:
+            message_items = content_by_message.get(message_id)
+            if message_items is None:
+                continue
+            tool_item = message_items.get(content_index)
+            if tool_item is None or tool_item.get("type") != "tool":
+                continue
+            state_content = tool_item.get("state_content")
+            if not isinstance(state_content, list):
+                continue
+            if state_content_type == "text":
+                state_content.append({"type": "text", "text": text_preview})
+            elif state_content_type == "file":
+                state_content.append(
+                    {
+                        "type": "file",
+                        "uri": uri_preview,
+                        "mime": mime_preview,
+                        "name": name_preview,
+                    }
+                )
+
+        for base_row in page:
+            item_map = content_by_message.get(base_row[0], {})
+            content_items = [item for _, item in sorted(item_map.items())]
+            rows.append((*base_row, content_items))
         if len(page) < page_size:
             return rows
         offset += len(page)
@@ -560,20 +767,16 @@ def _read_legacy_parts(
 
 
 def _parse_v2_row(row: tuple[Any, ...]) -> dict[str, Any] | None:
-    message_id, seq, message_type, time_created, _time_updated, raw_data = row
+    message_id, seq, message_type, time_created, _time_updated, user_text, raw_content = row
     if message_type not in {"user", "assistant"}:
         return None
-    data = _parse_json(raw_data)
-    if data is None:
-        return None
     if message_type == "user":
-        text = _bounded_text(data.get("text"))
+        text = _bounded_text(user_text)
         if text is None:
             return None
         content = [{"type": "text", "text": text}]
     else:
         content = []
-        raw_content = data.get("content")
         if not isinstance(raw_content, list):
             return None
         for item in raw_content:
@@ -587,18 +790,36 @@ def _parse_v2_row(row: tuple[Any, ...]) -> dict[str, Any] | None:
             elif item_type == "reasoning":
                 content.append({"type": "reasoning"})
             elif item_type == "tool":
-                state = item.get("state")
-                if not isinstance(state, dict):
-                    continue
-                status = state.get("status")
-                if not isinstance(status, str):
+                status = _bounded_text(item.get("status"))
+                if status is None:
                     status = "unknown"
+                tool_content: list[dict[str, str]] = []
+                raw_tool_content = item.get("state_content")
+                if isinstance(raw_tool_content, list):
+                    for block in raw_tool_content:
+                        if not isinstance(block, dict):
+                            continue
+                        block_type = block.get("type")
+                        if block_type == "text":
+                            text = _bounded_text(block.get("text"))
+                            if text is not None:
+                                tool_content.append({"type": "text", "text": text})
+                        elif block_type == "file":
+                            uri = _bounded_text(block.get("uri"))
+                            mime = _bounded_text(block.get("mime"))
+                            if uri is None or mime is None:
+                                continue
+                            file_block = {"type": "file", "uri": uri, "mime": mime}
+                            name = _bounded_text(block.get("name"))
+                            if name is not None:
+                                file_block["name"] = name
+                            tool_content.append(file_block)
                 content.append(
                     {
                         "type": "tool",
-                        "status": _bounded_text(status),
-                        "content": _bounded_text(state.get("content")),
-                        "error": _bounded_text(state.get("error")),
+                        "status": status,
+                        "content": tool_content,
+                        "error": _bounded_text(item.get("error")),
                     }
                 )
         if not content:
@@ -764,6 +985,116 @@ def test_schema_detection_branches_for_pure_legacy_pure_v2_and_both() -> None:
             conn.close()
 
 
+def test_v2_tool_extracts_nested_content_blocks_and_error_message() -> None:
+    conn = _new_connection(legacy=False, v2=True)
+    try:
+        conn.execute(
+            "INSERT INTO session_v2 (id, title, time_created, time_updated) VALUES (?, ?, ?, ?)",
+            ("nested-session", "Nested", 1, 1),
+        )
+        conn.execute(
+            "INSERT INTO session_message "
+            "(id, session_id, type, seq, time_created, time_updated, data) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "nested-tool",
+                "nested-session",
+                "assistant",
+                1,
+                2,
+                2,
+                json.dumps(
+                    {
+                        "content": [
+                            {
+                                "type": "tool",
+                                "id": "tool-1",
+                                "name": "read",
+                                "state": {
+                                    "status": "error",
+                                    "input": {"path": "src/example.py"},
+                                    "content": [
+                                        {"type": "text", "text": "bounded tool output"},
+                                        {
+                                            "type": "file",
+                                            "uri": "file:///tmp/example.py",
+                                            "mime": "text/plain",
+                                            "name": "example.py",
+                                        },
+                                    ],
+                                    "error": {
+                                        "type": "unknown",
+                                        "message": "nested failure",
+                                    },
+                                },
+                            }
+                        ]
+                    }
+                ),
+            ),
+        )
+        conn.commit()
+
+        assert _merge_messages(conn, "nested-session") == [
+            {
+                "id": "nested-tool",
+                "source": "v2",
+                "seq": 1,
+                "time_created": 2,
+                "event_time": 2,
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool",
+                        "status": "error",
+                        "content": [
+                            {"type": "text", "text": "bounded tool output"},
+                            {
+                                "type": "file",
+                                "uri": "file:///tmp/example.py",
+                                "mime": "text/plain",
+                                "name": "example.py",
+                            },
+                        ],
+                        "error": "nested failure",
+                    },
+                ],
+                "merge_key": (2, 0, 1, 2, "nested-tool"),
+            }
+        ]
+    finally:
+        conn.close()
+
+
+def test_v2_large_valid_json_row_survives_bounded_field_extraction() -> None:
+    conn = _new_connection(legacy=False, v2=True)
+    try:
+        conn.execute(
+            "INSERT INTO session_v2 (id, title, time_created, time_updated) VALUES (?, ?, ?, ?)",
+            ("large-session", "Large", 1, 1),
+        )
+        large_data = json.dumps(
+            {
+                "metadata": "x" * (_MAX_RAW_JSON + 100),
+                "content": [{"type": "text", "text": "large row survives"}],
+            }
+        )
+        assert len(large_data) > _MAX_RAW_JSON
+        conn.execute(
+            "INSERT INTO session_message "
+            "(id, session_id, type, seq, time_created, time_updated, data) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("large-message", "large-session", "assistant", 1, 2, 2, large_data),
+        )
+        conn.commit()
+
+        messages = _merge_messages(conn, "large-session")
+        assert len(messages) == 1
+        assert messages[0]["content"] == [{"type": "text", "text": "large row survives"}]
+    finally:
+        conn.close()
+
+
 def test_v2_fixture_reconstructs_root_and_fork_without_sensitive_content() -> None:
     conn = _make_opencode_fixture()
     try:
@@ -789,8 +1120,18 @@ def test_v2_fixture_reconstructs_root_and_fork_without_sensitive_content() -> No
         assert assistant_items[0] == {"type": "text", "text": "anonymous answer"}
         assert assistant_items[1] == {"type": "reasoning"}
         assert assistant_items[2]["status"] == "completed"
-        assert len(assistant_items[2]["content"]) <= _MAX_TEXT + 3
+        assert assistant_items[2]["content"][0]["type"] == "text"
+        assert len(assistant_items[2]["content"][0]["text"]) == _MAX_TEXT
+        assert assistant_items[2]["content"][1] == {
+            "type": "file",
+            "uri": "file:///tmp/example.py",
+            "mime": "text/x-python",
+            "name": "example.py",
+        }
         assert turns[2]["content"][0]["status"] == "error"
+        assert turns[2]["content"][0]["content"] == [
+            {"type": "text", "text": "bounded failed output"}
+        ]
         assert turns[2]["content"][0]["error"] == "anonymous failure"
         assert turns[3]["content"][0]["status"] == "future-status"
         assert _merge_messages(conn, "v2-fork") == [
@@ -928,7 +1269,25 @@ def test_adapter_documents_statuses_detection_merge_and_bounds() -> None:
     assert "LIMIT ? OFFSET ?" in text
     assert "`JOIN` or `UNION ALL` legacy chat rows with v2 chat rows" in text
     assert "state.content" in text
+    assert "state.content[]" in text
+    assert "state.error.message" in text
+    assert "json_each" in text
+    assert "json_extract" in text
+    v2_section = text.split("### v2 field-level JSON extraction", 1)[1].split(
+        "### Legacy field reads", 1
+    )[0]
+    assert "substr(data, 1, ?) AS data_preview" not in v2_section
+    assert "Do not select the full `data.content` array" in v2_section
+    assert "FROM session_v2\nORDER BY time_updated DESC, id ASC\nLIMIT ?;" in text
+    assert "FROM session\nORDER BY time_updated DESC, id ASC\nLIMIT ?;" in text
     assert "state.output" in text
+
+
+def test_bootstrap_tracks_previous_opencode_seed_for_safe_upgrade() -> None:
+    assert (
+        "2c0ff53e87f1231bb72dc8e0300f15f6e1e8888d8d0ed5d52694d1f30431ede8"
+        in bootstrap.KNOWN_SEED_HASHES["opencode"]
+    )
 
 
 def test_bootstrap_upgrades_known_seed_but_preserves_custom_adapter(
@@ -959,6 +1318,35 @@ def test_bootstrap_upgrades_known_seed_but_preserves_custom_adapter(
     assert custom_target.read_text(encoding="utf-8") == "# user customization\n"
     hints = bootstrap.customized_adapter_hints(custom_root, selected_sources=("opencode",))
     assert [(hint.source, hint.status) for hint in hints] == [("opencode", "customized")]
+
+
+def test_opencode_bootstrap_reaches_psyche_and_prompt_in_tmp_workspace(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace_root = tmp_path / "syke"
+    home = tmp_path / "home"
+    (home / ".local" / "share" / "opencode").mkdir(parents=True)
+    (home / ".local" / "share" / "opencode" / "opencode.db").touch()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(workspace, "WORKSPACE_ROOT", workspace_root)
+    monkeypatch.setattr(workspace, "SESSIONS_DIR", workspace_root / "sessions")
+    monkeypatch.setattr(workspace, "SYKE_DB", workspace_root / "syke.db")
+    monkeypatch.setattr(workspace, "MEMEX_PATH", workspace_root / "MEMEX.md")
+
+    workspace.initialize_workspace(selected_sources=("opencode",))
+
+    adapter = workspace_root / "adapters" / "opencode.md"
+    assert adapter.is_file()
+    assert "state.error.message" in adapter.read_text(encoding="utf-8")
+    psyche = (workspace_root / "PSYCHE.md").read_text(encoding="utf-8")
+    assert "`adapters/opencode.md`" in psyche
+    prompt = build_prompt(
+        workspace_root,
+        now="2026-08-28 06:00 UTC (UTC+0)",
+        home=home,
+        selected_sources=("opencode",),
+    )
+    assert "`adapters/opencode.md`" in prompt
 
 
 def test_opencode_discovery_excludes_wal_shm_and_non_db_files(tmp_path: Path) -> None:
