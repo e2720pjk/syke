@@ -6,6 +6,7 @@
 | ---------- | ------------------------- | -------- |
 | Claude Code | `~/.claude/projects/**/*.jsonl`, `~/.claude/transcripts/*.jsonl` | Active |
 | Codex | rollout JSONL under `~/.codex/sessions` / `archived_sessions`, plus `session_index.jsonl` and SQLite metadata | Active |
+| Pi | recursive session JSONL under `~/.pi/agent/sessions` (external Pi history only) | Active |
 | OpenCode | LLM-first read-only WAL-aware SQLite DB under `~/.local/share/opencode/opencode*.db`; schema-detected legacy `session/message/part` plus v2 `session_v2/session_message`, with WAL/SHM excluded and bounded keyed message merge | Active (legacy + OpenCode 2.0 v2) |
 | Cursor | official user-data roots under Cursor `workspaceStorage` / `globalStorage` | Active |
 | GitHub Copilot | Copilot CLI `~/.copilot/session-state/**/events.jsonl` plus VS Code `chatSessions` files | Active |

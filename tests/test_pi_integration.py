@@ -49,7 +49,7 @@ def pi_runtime(monkeypatch: pytest.MonkeyPatch) -> Iterator[PiRuntime]:
     monkeypatch.setattr(
         pi_client,
         "PI_PACKAGE_ROOT",
-        pi_agent_dir.parent / "pi" / "node_modules" / "@mariozechner" / "pi-coding-agent",
+        pi_agent_dir.parent / "pi" / "node_modules" / "@earendil-works" / "pi-coding-agent",
     )
     monkeypatch.setattr(pi_client, "PI_CLI_JS", pi_client.PI_PACKAGE_ROOT / "dist" / "cli.js")
 

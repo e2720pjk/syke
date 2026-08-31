@@ -164,16 +164,22 @@ Do not SQL-join legacy messages/parts to v2 messages.
 A SQL `JOIN` or `UNION ALL` is permitted for **session metadata only**, after
 schema detection confirms the referenced tables. It is not a conversation
 merge. When both `session_v2` and `session` exist, use separate metadata
-branches or this mixed-schema CTE; execute it only in the both-present branch:
+branches or this mixed-schema CTE; execute it only in the both-present branch.
+The form below also requires the separately detected `message` table for
+legacy activity recency; if `message` is absent, omit `legacy_activity` and
+use `time_created` for legacy rows in `recency`.
 
 ```sql
 WITH merged AS (
-  SELECT id, substr(title, 1, ?) AS title, time_created, time_updated,
+  SELECT id, parent_id, fork_session_id, fork_boundary,
+         substr(title, 1, ?) AS title, time_created, time_updated,
          substr(agent, 1, ?) AS agent, substr(model, 1, ?) AS model,
          2 AS source_rank
   FROM session_v2
   UNION ALL
-  SELECT id, substr(title, 1, ?) AS title, time_created, time_updated,
+  SELECT id, NULL AS parent_id, NULL AS fork_session_id,
+         NULL AS fork_boundary,
+         substr(title, 1, ?) AS title, time_created, time_updated,
          substr(agent, 1, ?) AS agent, substr(model, 1, ?) AS model,
          1 AS source_rank
   FROM session
@@ -185,12 +191,27 @@ WITH merged AS (
                     time_created DESC, id ASC
          ) AS row_number
   FROM merged
+), legacy_activity AS (
+  SELECT session_id AS id,
+         MAX(COALESCE(time_updated, time_created)) AS latest_time
+  FROM message
+  GROUP BY session_id
+  ORDER BY latest_time DESC, session_id ASC
+  LIMIT ?
 ), recency AS (
-  SELECT id, MAX(COALESCE(time_updated, time_created)) AS latest_time
+  SELECT merged.id,
+         MAX(
+           CASE WHEN merged.source_rank = 1
+                THEN COALESCE(legacy_activity.latest_time, merged.time_created)
+                ELSE COALESCE(merged.time_updated, merged.time_created)
+           END
+         ) AS latest_time
   FROM merged
-  GROUP BY id
+  LEFT JOIN legacy_activity ON legacy_activity.id = merged.id
+  GROUP BY merged.id
 )
-SELECT chosen.id, chosen.title, chosen.time_created,
+SELECT chosen.id, chosen.parent_id, chosen.fork_session_id,
+       chosen.fork_boundary, chosen.title, chosen.time_created,
        recency.latest_time, chosen.agent, chosen.model
 FROM chosen
 JOIN recency ON recency.id = chosen.id
@@ -199,13 +220,16 @@ ORDER BY recency.latest_time DESC, chosen.id ASC
 LIMIT ?;
 ```
 
-Bind one fixed metadata budget to each `substr` placeholder and a separate
-bounded page size to the final `LIMIT`; do not substitute unbounded defaults.
-For a v2-only database, keep the same field bounds rather than selecting raw
-metadata:
+Bind one fixed metadata budget to each `substr` placeholder, a bounded page
+size to `legacy_activity`, and a separate bounded page size to the final
+`LIMIT`; do not substitute unbounded defaults. For a v2-only database, keep
+the same field bounds rather than selecting raw metadata:
 
 ```sql
 SELECT id,
+       parent_id,
+       fork_session_id,
+       fork_boundary,
        substr(title, 1, ?) AS title,
        time_created,
        time_updated,
@@ -216,24 +240,41 @@ ORDER BY time_updated DESC, id ASC
 LIMIT ?;
 ```
 
-Use the equivalent bounded projection from `session` for a legacy-only
-database:
+For a legacy-only database with `message` detected, use a bounded activity
+projection instead of trusting the migrated session timestamp:
 
 ```sql
-SELECT id,
-       substr(title, 1, ?) AS title,
-       time_created,
-       time_updated,
-       substr(agent, 1, ?) AS agent,
-       substr(model, 1, ?) AS model
+WITH activity AS (
+  SELECT session_id AS id,
+         MAX(COALESCE(time_updated, time_created)) AS latest_time
+  FROM message
+  GROUP BY session_id
+  ORDER BY latest_time DESC, session_id ASC
+  LIMIT ?
+)
+SELECT session.id,
+       NULL AS parent_id,
+       NULL AS fork_session_id,
+       NULL AS fork_boundary,
+       substr(session.title, 1, ?) AS title,
+       session.time_created,
+       session.time_updated,
+       substr(session.agent, 1, ?) AS agent,
+       substr(session.model, 1, ?) AS model
 FROM session
-ORDER BY time_updated DESC, id ASC
+LEFT JOIN activity ON activity.id = session.id
+ORDER BY COALESCE(activity.latest_time, session.time_created) DESC,
+         session.id ASC
 LIMIT ?;
 ```
 
-The mixed CTE makes v2 metadata authoritative for overlapping session IDs,
-while `recency.latest_time` is the maximum from both rows. A metadata ID choice
-does **not** choose, deduplicate, or order message rows.
+If `message` is absent, use the same bounded projection but order by
+`time_created DESC, id ASC`; legacy `session.time_updated` stopped advancing
+at migration and must not be the authoritative recency signal. The mixed CTE
+makes v2 metadata authoritative for overlapping session IDs, while its
+activity-aware `recency.latest_time` uses message activity for legacy rows and
+live `time_updated` for v2 rows. A metadata ID choice does **not** choose,
+deduplicate, or order message rows.
 
 Optional `project`/`workspace` joins are likewise session-metadata-only and may
 be used only after those tables are detected. Do not use their unverified

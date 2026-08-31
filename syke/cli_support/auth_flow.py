@@ -1,5 +1,7 @@
 """Interactive auth and setup helpers for the Syke CLI."""
 
+# pyright: reportMissingImports=false
+
 from __future__ import annotations
 
 import subprocess
@@ -127,7 +129,7 @@ def term_menu_select_many(
         if isinstance(result, tuple):
             return list(result)
         return [result]
-    except Exception:
+    except Exception:  # pi-lens-ignore: no-boolean-in-except
         for i, entry in enumerate(entries, 1):
             marker = "[x]" if (i - 1) in default_indices else "[ ]"
             click.echo(f"  {marker} [{i}] {entry}")
@@ -355,7 +357,9 @@ def setup_api_key_flow(provider_id: str | None = None) -> bool:
 
     if provider_id is None:
         api_providers = [
-            item["id"] for item in setup_provider_choices() if not cast(bool, item.get("oauth"))
+            str(item["id"])
+            for item in setup_provider_choices()
+            if isinstance(item.get("id"), str) and not cast(bool, item.get("oauth"))
         ]
         entries = [f"{pid}" for pid in api_providers]
         idx = term_menu_select(entries, title="\n  Which provider?\n")
@@ -375,7 +379,7 @@ def ensure_setup_pi_runtime() -> tuple[str, str]:
         console.print(f"  [red]✗[/red]  Pi runtime: {exc}")
         raise SykeRuntimeException(
             "Setup requires a working Pi runtime before provider setup. "
-            "Install Node.js (>= 20; 22 LTS recommended) and rerun."
+            "Install Node.js >= 22.19.0 and rerun."
         ) from exc
 
     console.print(f"  [green]✓[/green] Pi v{ver}")
@@ -405,7 +409,7 @@ def verify_setup_provider_connection(provider_id: str, model_id: str) -> str:
 
 
 def resolve_activation_model(provider_id: str, *, explicit_model: str | None = None) -> str:
-    from syke.llm.pi_client import get_pi_provider_catalog
+    from syke.llm.pi_client import get_pi_provider_catalog, resolve_pi_model_pattern
     from syke.pi_state import get_default_model
 
     if explicit_model:
@@ -416,13 +420,26 @@ def resolve_activation_model(provider_id: str, *, explicit_model: str | None = N
     current_default_model = get_default_model()
     if entry is not None:
         model_candidates = tuple(entry.available_models or entry.models)
-        if current_default_model and current_default_model in set(model_candidates):
-            return current_default_model
-        if entry.default_model and entry.default_model in set(model_candidates):
-            return entry.default_model
+        if current_default_model:
+            resolved = resolve_pi_model_pattern(
+                provider_id,
+                current_default_model,
+                model_candidates,
+            )
+            if resolved:
+                return resolved
+        if entry.default_model:
+            resolved = resolve_pi_model_pattern(
+                provider_id,
+                entry.default_model,
+                model_candidates,
+            )
+            if resolved:
+                return resolved
         if model_candidates:
             return model_candidates[0]
 
+    # Preserve custom Pi model IDs when the live catalog cannot describe them.
     if current_default_model:
         return current_default_model
 

@@ -1,3 +1,5 @@
+# pyright: reportMissingImports=false
+
 """Setup flow support helpers for the Syke CLI."""
 
 from __future__ import annotations
@@ -72,8 +74,20 @@ def trust_payload(user_id: str) -> dict[str, list[dict[str, str]]]:
     return {"sources": sources, "targets": targets}
 
 
+def _latest_mtime_sort_value(item: dict[str, object]) -> float:
+    value = item.get("latest_mtime")
+    if not isinstance(value, (int, float)):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
 def setup_source_inventory(user_id: str) -> list[dict[str, object]]:
     from datetime import UTC, datetime
+
+    from syke.observe.catalog import iter_discovered_files
 
     sources: list[dict[str, object]] = []
     registry = observe_registry(user_id)
@@ -85,25 +99,21 @@ def setup_source_inventory(user_id: str) -> list[dict[str, object]]:
         latest_mtime: float | None = None
         if desc.discover is not None:
             for root in desc.discover.roots:
-                base = Path(root.path).expanduser()
-                roots.append(str(base))
-                if not base.exists():
-                    continue
-                patterns = root.include or ["**/*"]
-                for pattern in patterns:
-                    try:
-                        for match in base.glob(pattern):
-                            files_found += 1
-                            try:
-                                mtime = match.stat().st_mtime
-                            except OSError:
-                                mtime = None
-                            if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
-                                latest_mtime = mtime
-                            if len(detected_paths) < 3:
-                                detected_paths.append(str(match))
-                    except OSError:
-                        continue
+                roots.append(str(Path(root.path).expanduser()))
+            try:
+                discovered_files = iter_discovered_files(desc)
+            except OSError:
+                discovered_files = []
+            for match in discovered_files:
+                files_found += 1
+                try:
+                    mtime = match.stat().st_mtime
+                except OSError:
+                    mtime = None
+                if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
+                    latest_mtime = mtime
+                if len(detected_paths) < 3:
+                    detected_paths.append(str(match))
 
         sources.append(
             {
@@ -123,7 +133,7 @@ def setup_source_inventory(user_id: str) -> list[dict[str, object]]:
     sources.sort(
         key=lambda item: (
             not bool(item["detected"]),
-            -(cast(float | None, item["latest_mtime"]) or 0.0),
+            -_latest_mtime_sort_value(item),
             cast(str, item["source"]),
         )
     )

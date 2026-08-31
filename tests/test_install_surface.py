@@ -32,6 +32,7 @@ def test_built_wheel_contains_runtime_and_packaged_assets(tmp_path: Path) -> Non
         "syke/observe/catalog.py",
         "syke/observe/seeds/adapter-claude-code.md",
         "syke/observe/seeds/adapter-codex.md",
+        "syke/observe/seeds/adapter-pi.md",
         "syke/observe/seeds/adapter-opencode.md",
         "syke/observe/seeds/adapter-cursor.md",
         "syke/observe/seeds/adapter-copilot.md",

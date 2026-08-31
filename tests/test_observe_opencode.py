@@ -445,15 +445,55 @@ def _read_metadata(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
     """Read metadata with a schema branch; mixed CTE is never run when absent."""
     tables = _detect_tables(conn)
     if {"session_v2", "session"} <= tables:
-        rows = conn.execute(
+        if "message" in tables:
+            recency_ctes = """
+            legacy_activity AS (
+              SELECT session_id AS id,
+                     MAX(COALESCE(time_updated, time_created)) AS latest_time
+              FROM message
+              GROUP BY session_id
+              ORDER BY latest_time DESC, session_id ASC
+              LIMIT ?
+            ), recency AS (
+              SELECT merged.id,
+                     MAX(
+                       CASE WHEN merged.source_rank = 1
+                            THEN COALESCE(legacy_activity.latest_time, merged.time_created)
+                            ELSE COALESCE(merged.time_updated, merged.time_created)
+                       END
+                     ) AS latest_time
+              FROM merged
+              LEFT JOIN legacy_activity ON legacy_activity.id = merged.id
+              GROUP BY merged.id
+            )
             """
+            recency_params = (100,)
+        else:
+            recency_ctes = """
+            recency AS (
+              SELECT id,
+                     MAX(
+                       CASE WHEN source_rank = 1 THEN time_created
+                            ELSE COALESCE(time_updated, time_created)
+                       END
+                     ) AS latest_time
+              FROM merged
+              GROUP BY id
+            )
+            """
+            recency_params = ()
+        return conn.execute(
+            f"""
             WITH merged AS (
-              SELECT id, substr(title, 1, ?) AS title, time_created, time_updated,
+              SELECT id, parent_id, fork_session_id, fork_boundary,
+                     substr(title, 1, ?) AS title, time_created, time_updated,
                      substr(agent, 1, ?) AS agent, substr(model, 1, ?) AS model,
                      2 AS source_rank
               FROM session_v2
               UNION ALL
-              SELECT id, substr(title, 1, ?) AS title, time_created, time_updated,
+              SELECT id, NULL AS parent_id, NULL AS fork_session_id,
+                     NULL AS fork_boundary,
+                     substr(title, 1, ?) AS title, time_created, time_updated,
                      substr(agent, 1, ?) AS agent, substr(model, 1, ?) AS model,
                      1 AS source_rank
               FROM session
@@ -465,12 +505,10 @@ def _read_metadata(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
                                 time_created DESC, id ASC
                      ) AS row_number
               FROM merged
-            ), recency AS (
-              SELECT id, MAX(COALESCE(time_updated, time_created)) AS latest_time
-              FROM merged
-              GROUP BY id
-            )
-            SELECT chosen.id, chosen.title, chosen.time_created,
+            ),
+            {recency_ctes}
+            SELECT chosen.id, chosen.parent_id, chosen.fork_session_id,
+                   chosen.fork_boundary, chosen.title, chosen.time_created,
                    recency.latest_time, chosen.agent, chosen.model
             FROM chosen
             JOIN recency ON recency.id = chosen.id
@@ -478,21 +516,56 @@ def _read_metadata(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
             ORDER BY recency.latest_time DESC, chosen.id ASC
             LIMIT ?
             """,
-            (_MAX_TEXT, _MAX_TEXT, _MAX_TEXT, _MAX_TEXT, _MAX_TEXT, _MAX_TEXT, 100),
+            (
+                _MAX_TEXT,
+                _MAX_TEXT,
+                _MAX_TEXT,
+                _MAX_TEXT,
+                _MAX_TEXT,
+                _MAX_TEXT,
+                *recency_params,
+                100,
+            ),
         ).fetchall()
-        return rows
     if "session_v2" in tables:
         return conn.execute(
-            "SELECT id, substr(title, 1, ?) AS title, time_created, time_updated, "
+            "SELECT id, parent_id, fork_session_id, fork_boundary, "
+            "substr(title, 1, ?) AS title, time_created, time_updated, "
             "substr(agent, 1, ?) AS agent, substr(model, 1, ?) AS model "
             "FROM session_v2 ORDER BY time_updated DESC, id ASC LIMIT ?",
             (_MAX_TEXT, _MAX_TEXT, _MAX_TEXT, 100),
         ).fetchall()
     if "session" in tables:
+        if "message" in tables:
+            return conn.execute(
+                """
+                WITH activity AS (
+                  SELECT session_id AS id,
+                         MAX(COALESCE(time_updated, time_created)) AS latest_time
+                  FROM message
+                  GROUP BY session_id
+                  ORDER BY latest_time DESC, session_id ASC
+                  LIMIT ?
+                )
+                SELECT session.id, NULL AS parent_id, NULL AS fork_session_id,
+                       NULL AS fork_boundary, substr(session.title, 1, ?) AS title,
+                       session.time_created, session.time_updated,
+                       substr(session.agent, 1, ?) AS agent,
+                       substr(session.model, 1, ?) AS model
+                FROM session
+                LEFT JOIN activity ON activity.id = session.id
+                ORDER BY COALESCE(activity.latest_time, session.time_created) DESC,
+                         session.id ASC
+                LIMIT ?
+                """,
+                (100, _MAX_TEXT, _MAX_TEXT, _MAX_TEXT, 100),
+            ).fetchall()
         return conn.execute(
-            "SELECT id, substr(title, 1, ?) AS title, time_created, time_updated, "
-            "substr(agent, 1, ?) AS agent, substr(model, 1, ?) AS model "
-            "FROM session ORDER BY time_updated DESC, id ASC LIMIT ?",
+            "SELECT id, NULL AS parent_id, NULL AS fork_session_id, "
+            "NULL AS fork_boundary, substr(title, 1, ?) AS title, "
+            "time_created, time_updated, substr(agent, 1, ?) AS agent, "
+            "substr(model, 1, ?) AS model "
+            "FROM session ORDER BY time_created DESC, id ASC LIMIT ?",
             (_MAX_TEXT, _MAX_TEXT, _MAX_TEXT, 100),
         ).fetchall()
     return []
@@ -985,6 +1058,30 @@ def test_schema_detection_branches_for_pure_legacy_pure_v2_and_both() -> None:
             conn.close()
 
 
+def test_legacy_metadata_orders_by_message_activity_not_session_timestamp() -> None:
+    conn = _new_connection(legacy=True, v2=False)
+    try:
+        conn.executemany(
+            "INSERT INTO session (id, title, time_created, time_updated) VALUES (?, ?, ?, ?)",
+            [("stale", "Stale", 1, 999), ("active", "Active", 2, 3)],
+        )
+        conn.executemany(
+            "INSERT INTO message (id, session_id, time_created, time_updated, data) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                ("stale-message", "stale", 4, 10, '{"role":"user"}'),
+                ("active-message", "active", 5, 100, '{"role":"user"}'),
+            ],
+        )
+        conn.commit()
+
+        rows = _read_metadata(conn)
+
+        assert [row[0] for row in rows] == ["active", "stale"]
+    finally:
+        conn.close()
+
+
 def test_v2_tool_extracts_nested_content_blocks_and_error_message() -> None:
     conn = _new_connection(legacy=False, v2=True)
     try:
@@ -1244,16 +1341,46 @@ def test_legacy_text_parts_tools_and_filtered_parts_reconstruct() -> None:
         conn.close()
 
 
-def test_legacy_v2_session_dedup_prefers_v2_and_keeps_union_recency() -> None:
+def test_legacy_v2_session_dedup_prefers_v2_and_uses_activity_recency() -> None:
     conn = _make_opencode_fixture()
     try:
         rows = _read_metadata(conn)
         by_id = {row[0]: row for row in rows}
         assert len(by_id) == len(rows)
-        assert by_id["overlap"] == ("overlap", "V2 title", 300, 900, "build-agent", "model-anon")
-        assert "legacy-only" in by_id
+        assert by_id["overlap"] == (
+            "overlap",
+            None,
+            None,
+            None,
+            "V2 title",
+            300,
+            800,
+            "build-agent",
+            "model-anon",
+        )
+        assert by_id["v2-fork"] == (
+            "v2-fork",
+            "v2-root",
+            "v2-root",
+            "v2-msg-1",
+            "Synthetic fork",
+            200,
+            600,
+            "build-agent",
+            "model-anon",
+        )
+        assert by_id["legacy-only"] == (
+            "legacy-only",
+            None,
+            None,
+            None,
+            "Legacy history",
+            10,
+            10,
+            "legacy-agent",
+            "legacy-model",
+        )
         assert "v2-root" in by_id
-        assert "v2-fork" in by_id
     finally:
         conn.close()
 
@@ -1279,7 +1406,18 @@ def test_adapter_documents_statuses_detection_merge_and_bounds() -> None:
     assert "substr(data, 1, ?) AS data_preview" not in v2_section
     assert "Do not select the full `data.content` array" in v2_section
     assert "FROM session_v2\nORDER BY time_updated DESC, id ASC\nLIMIT ?;" in text
-    assert "FROM session\nORDER BY time_updated DESC, id ASC\nLIMIT ?;" in text
+    assert "FROM message" in text
+    assert "GROUP BY session_id" in text
+    assert "ORDER BY COALESCE(activity.latest_time, session.time_created) DESC" in text
+    assert "time_created DESC, id ASC" in text
+    assert "chosen.parent_id" in text
+    assert "chosen.fork_session_id" in text
+    assert "chosen.fork_boundary" in text
+    assert "SELECT id, parent_id, fork_session_id, fork_boundary," in text
+    assert (
+        "SELECT id, NULL AS parent_id, NULL AS fork_session_id,\n"
+        "         NULL AS fork_boundary,"
+    ) in text
     assert "state.output" in text
 
 

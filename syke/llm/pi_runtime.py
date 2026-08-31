@@ -14,11 +14,12 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_ask_timeout(timeout_raw: object) -> float | None:
-    if isinstance(timeout_raw, (int, float)) and timeout_raw > 0:
-        return float(timeout_raw)
-    if ASK_TIMEOUT > 0:
-        return float(ASK_TIMEOUT)
-    return None
+    candidate = timeout_raw if isinstance(timeout_raw, (int, float)) else ASK_TIMEOUT
+    try:
+        timeout = float(candidate)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return timeout if timeout > 0 else None
 
 
 def run_ask(
@@ -34,9 +35,11 @@ def run_ask(
     from datetime import datetime
 
     from syke.runtime.psyche_md import build_prompt, format_now_for_prompt
-    from syke.runtime.workspace import WORKSPACE_ROOT
+    from syke.runtime.workspace import WORKSPACE_ROOT, initialize_workspace
     from syke.source_selection import get_selected_sources
 
+    selected_sources = get_selected_sources(user_id)
+    initialize_workspace(selected_sources=selected_sources)
     base = build_prompt(
         WORKSPACE_ROOT,
         db=db,
@@ -44,7 +47,7 @@ def run_ask(
         now=format_now_for_prompt(datetime.now()),
         context="ask",
         include_synthesis=False,
-        selected_sources=get_selected_sources(user_id),
+        selected_sources=selected_sources,
     )
     question = f"{base}\n---\n\nUser question: {question}"
 

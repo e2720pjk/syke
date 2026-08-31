@@ -1,12 +1,16 @@
+# pyright: reportAttributeAccessIssue=false, reportMissingImports=false
+
 from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -77,6 +81,58 @@ def test_benchmark_judge_rpc_script_requires_full_three_axis_verdict() -> None:
     assert "cross_harness_braid" in script
     assert "artifact_routing_consistency" in script
     assert "contradiction_handling" in script
+    assert "services.modelRuntime.getModel(provider, modelId)" in script
+    assert "services.modelRegistry" not in script
+
+
+def test_benchmark_judge_rpc_resolves_gpt56_model_and_max_thinking(tmp_path: Path) -> None:
+    pi_prefix = pi_client.PI_LOCAL_PREFIX
+    package_root = pi_client.PI_PACKAGE_ROOT
+    if not package_root.is_dir():
+        try:
+            from pwd import getpwuid
+
+            pi_prefix = Path(getpwuid(os.getuid()).pw_dir) / ".syke" / "pi"
+            package_root = pi_prefix / "node_modules" / "@earendil-works" / "pi-coding-agent"
+        except (ImportError, KeyError, OSError):
+            package_root = tmp_path / "missing-pi-package"
+    if not package_root.is_dir():
+        pytest.skip("managed Pi package is not installed")
+    node = pi_client._find_executable("node", pi_client._NODE_CANDIDATES)
+    if node is None:
+        pytest.skip("Node.js is not installed")
+
+    agent_dir = tmp_path / "pi-agent"
+    session_dir = tmp_path / "sessions"
+    agent_dir.mkdir()
+    env = pi_client._build_subprocess_env(
+        {
+            "PI_CODING_AGENT_DIR": str(agent_dir),
+            "SYKE_RPC_CWD": str(tmp_path),
+            "SYKE_RPC_SESSION_DIR": str(session_dir),
+            "SYKE_RPC_PROVIDER": "openai-codex",
+            "SYKE_RPC_MODEL": "gpt-5.6-luna:max",
+        },
+        provider="openai-codex",
+    )
+    proc = subprocess.run(
+        [str(node), "--input-type=module", "-e", pi_client._benchmark_judge_rpc_script()],
+        cwd=str(pi_prefix),
+        env=env,
+        input='{"id":"state","type":"get_state"}\n',
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    responses = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
+    response = next(item for item in responses if item.get("command") == "get_state")
+    assert response["success"] is True
+    assert response["data"]["model"]["provider"] == "openai-codex"
+    assert response["data"]["model"]["id"] == "gpt-5.6-luna"
+    assert response["data"]["thinkingLevel"] == "max"
 
 
 def test_rpc_stream_normalizes_tool_invocations_without_double_counting_end_events() -> None:
@@ -425,12 +481,18 @@ def test_ensure_pi_binary_writes_stable_launcher_from_existing_runtime(
     pi_bin = pi_home / "bin" / "pi"
     pi_node = pi_home / "bin" / "node"
     pi_prefix = pi_home / "pi"
-    pi_cli = pi_prefix / "node_modules" / "@mariozechner" / "pi-coding-agent" / "dist" / "cli.js"
+    pi_cli = pi_prefix / "node_modules" / "@earendil-works" / "pi-coding-agent" / "dist" / "cli.js"
     real_node = tmp_path / "real-node"
 
     pi_cli.parent.mkdir(parents=True, exist_ok=True)
     pi_cli.write_text("console.log('pi');", encoding="utf-8")
-    real_node.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (pi_cli.parent.parent / "package.json").write_text(
+        '{"version":"0.84.1"}\n', encoding="utf-8"
+    )
+    real_node.write_text(
+        '#!/bin/sh\nif [ "$1" = "--version" ]; then echo v24.18.1; exit 0; fi\nexit 0\n',
+        encoding="utf-8",
+    )
     real_node.chmod(0o755)
     pi_bin.parent.mkdir(parents=True, exist_ok=True)
     pi_bin.symlink_to(pi_cli)
@@ -458,17 +520,69 @@ def test_ensure_pi_binary_writes_stable_launcher_from_existing_runtime(
     assert pi_cli.read_text(encoding="utf-8") == "console.log('pi');"
 
 
+@pytest.mark.parametrize("manifest", ['{"version":"0.83.0"}\n', '{}\n'])
+def test_ensure_pi_binary_reinstalls_stale_or_unknown_managed_runtime(
+    tmp_path: Path,
+    monkeypatch,
+    manifest: str,
+) -> None:
+    pi_home = tmp_path / "syke-home"
+    pi_bin = pi_home / "bin" / "pi"
+    pi_node = pi_home / "bin" / "node"
+    pi_prefix = pi_home / "pi"
+    package_root = pi_prefix / "node_modules" / "@earendil-works" / "pi-coding-agent"
+    pi_cli = package_root / "dist" / "cli.js"
+    real_node = tmp_path / "real-node"
+    pi_cli.parent.mkdir(parents=True, exist_ok=True)
+    pi_cli.write_text("console.log('pi');", encoding="utf-8")
+    (package_root / "package.json").write_text(manifest, encoding="utf-8")
+    real_node.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    real_node.chmod(0o755)
+
+    monkeypatch.setattr(pi_client, "PI_LOCAL_PREFIX", pi_prefix)
+    monkeypatch.setattr(pi_client, "PI_PACKAGE_ROOT", package_root)
+    monkeypatch.setattr(pi_client, "PI_CLI_JS", pi_cli)
+    monkeypatch.setattr(pi_client, "PI_BIN", pi_bin)
+    monkeypatch.setattr(pi_client, "PI_NODE_BIN", pi_node)
+    monkeypatch.setattr(pi_client, "ensure_node_binary", lambda: real_node)
+    monkeypatch.setattr(pi_client, "_resolve_npm_binary", lambda: "/usr/bin/npm")
+    captured: dict[str, object] = {}
+
+    def _run(command, **kwargs):
+        captured["command"] = command
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(pi_client.subprocess, "run", _run)
+
+    launcher = Path(pi_client.ensure_pi_binary())
+
+    assert launcher == pi_bin
+    assert captured["command"] == [
+        "/usr/bin/npm",
+        "install",
+        "--prefix",
+        str(pi_prefix),
+        "@earendil-works/pi-coding-agent@0.84.1",
+    ]
+
+
 def test_get_pi_version_uses_launcher_in_minimal_env(tmp_path: Path, monkeypatch) -> None:
     pi_home = tmp_path / "syke-home"
     pi_bin = pi_home / "bin" / "pi"
     pi_node = pi_home / "bin" / "node"
     pi_prefix = pi_home / "pi"
-    pi_cli = pi_prefix / "node_modules" / "@mariozechner" / "pi-coding-agent" / "dist" / "cli.js"
+    pi_cli = pi_prefix / "node_modules" / "@earendil-works" / "pi-coding-agent" / "dist" / "cli.js"
     real_node = tmp_path / "real-node"
 
     pi_cli.parent.mkdir(parents=True, exist_ok=True)
     pi_cli.write_text("console.log('pi');", encoding="utf-8")
-    real_node.write_text("#!/bin/sh\necho vtest >&2\n", encoding="utf-8")
+    (pi_cli.parent.parent / "package.json").write_text(
+        '{"version":"0.84.1"}\n', encoding="utf-8"
+    )
+    real_node.write_text(
+        "#!/bin/sh\necho v24.18.1 >&2\nexit 0\n",
+        encoding="utf-8",
+    )
     real_node.chmod(0o755)
 
     monkeypatch.setattr(pi_client, "PI_LOCAL_PREFIX", pi_prefix)
@@ -483,7 +597,7 @@ def test_get_pi_version_uses_launcher_in_minimal_env(tmp_path: Path, monkeypatch
     )
 
     pi_client.ensure_pi_binary()
-    assert pi_client.get_pi_version(minimal_env=True) == "vtest"
+    assert pi_client.get_pi_version(minimal_env=True) == "v24.18.1"
 
 
 def test_ensure_node_binary_rejects_node_without_regexp_v_support(
@@ -508,7 +622,7 @@ def test_ensure_node_binary_rejects_node_without_regexp_v_support(
         pi_client.shutil, "which", lambda name: str(real_node) if name == "node" else None
     )
 
-    with pytest.raises(RuntimeError, match="Node.js 20\\+"):
+    with pytest.raises(RuntimeError, match="Node.js 22\\.19\\+"):
         pi_client.ensure_node_binary()
 
 
@@ -550,6 +664,17 @@ def test_load_pi_catalog_parses_provider_requirements(monkeypatch, tmp_path: Pat
     assert entries[0].requires_base_url is True
     assert entries[1].id == "openai"
     assert entries[1].requires_base_url is False
+
+
+def test_pi_model_pattern_preserves_max_thinking_suffix() -> None:
+    assert (
+        pi_client._match_pi_model_pattern(
+            "openai-codex",
+            "gpt-5.6-luna:max",
+            ("gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol"),
+        )
+        == "gpt-5.6-luna:max"
+    )
 
 
 def test_resolve_pi_model_uses_pi_provider_default_when_no_explicit_model(monkeypatch) -> None:
@@ -648,7 +773,7 @@ def test_build_subprocess_env_prefers_darwin_user_temp_dir(
 
 
 def test_probe_connection_uses_same_bounded_env_as_runtime(monkeypatch, tmp_path: Path) -> None:
-    seen: dict[str, object] = {}
+    seen: dict[str, Any] = {}
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
     monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
     monkeypatch.setenv("UNSAFE_SECRET", "should-not-leak")
@@ -701,7 +826,7 @@ def test_probe_connection_returns_clean_timeout_failure(monkeypatch, tmp_path: P
 
 
 def test_run_pi_node_script_uses_bounded_env(monkeypatch, tmp_path: Path) -> None:
-    seen: dict[str, object] = {}
+    seen: dict[str, Any] = {}
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
     monkeypatch.setenv("UNSAFE_SECRET", "should-not-leak")
     monkeypatch.setenv("HOME", "/tmp/home")
@@ -749,7 +874,7 @@ def test_run_pi_node_script_does_not_resolve_active_provider(monkeypatch, tmp_pa
 
 
 def test_oauth_login_uses_bounded_env(monkeypatch, tmp_path: Path) -> None:
-    seen: dict[str, object] = {}
+    seen: dict[str, Any] = {}
     monkeypatch.setenv("SYKE_PI_AGENT_DIR", str(tmp_path / "pi-agent"))
     monkeypatch.setenv("UNSAFE_SECRET", "should-not-leak")
     monkeypatch.setenv("OPENAI_API_KEY", "host-openai")
@@ -773,7 +898,7 @@ def test_oauth_login_uses_bounded_env(monkeypatch, tmp_path: Path) -> None:
 
 def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, monkeypatch) -> None:
     runtime = _make_runtime(tmp_path, monkeypatch)
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
     child_tmp = tmp_path / "child-tmp"
     child_tmp.mkdir()
     monkeypatch.setenv("SYKE_PI_TMPDIR", str(child_tmp))
@@ -828,7 +953,7 @@ def test_runtime_start_passes_provider_and_exact_model_to_pi(tmp_path: Path, mon
 def test_runtime_start_threads_selected_sources_into_sandbox_profile(
     tmp_path: Path, monkeypatch
 ) -> None:
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
 
     runtime = pi_client.PiRuntime(
         workspace_dir=tmp_path,

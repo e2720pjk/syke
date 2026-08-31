@@ -81,7 +81,7 @@ For unattended agents, installers, and CI:
 
 1. Run `syke setup --agent`.
 2. Parse the JSON `status`, `next_steps`, and `exit_code` fields.
-3. If `status` is `"needs_runtime"`, install Node.js 20+ (22 LTS recommended)
+3. If `status` is `"needs_runtime"`, install Node.js >= 22.19.0
    and rerun `syke setup --agent`.
 4. If `status` is `"needs_provider"`, configure provider auth with
    `syke auth set <provider> --api-key <API_KEY> --use` or

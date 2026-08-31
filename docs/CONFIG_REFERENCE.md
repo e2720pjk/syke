@@ -85,7 +85,7 @@ syke config path
 | Key | Type | Default | Meaning | Env override |
 | --- | --- | --- | --- | --- |
 | `threshold` | `int` | `5` | Legacy config key (synthesis always runs; the agent decides via temporal context whether anything warrants updating) | `SYKE_SYNC_THRESHOLD` |
-| `thinking_level` | `string` | `"medium"` | Pi thinking level written to workspace settings | `SYKE_SYNC_THINKING_LEVEL` |
+| `thinking_level` | `string` | `"medium"` | Pi thinking level written to workspace settings (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`) | `SYKE_SYNC_THINKING_LEVEL` |
 | `timeout` | `int` | `600` | Wall-clock timeout in seconds | `SYKE_SYNC_TIMEOUT` |
 | `first_run_timeout` | `int` | `1500` | Wall-clock timeout for the first synthesis run | `SYKE_SYNC_FIRST_RUN_TIMEOUT` |
 
@@ -165,6 +165,10 @@ Syke now keeps Pi-native runtime state in:
 - `~/.syke/pi-agent/settings.json`
 - `~/.syke/pi-agent/models.json`
 
+External Pi history is an optional observation source, discovered separately
+from this managed state at `~/.pi/agent/sessions/**/*.jsonl`. Syke excludes
+`~/.syke/sessions/` and `~/.syke/pi-agent/` from Pi history discovery.
+
 Use the CLI to manage that state:
 
 ```bash
@@ -185,7 +189,7 @@ user = "saxenauts"
 timezone = "auto"
 
 [synthesis]
-thinking_level = "medium"
+thinking_level = "medium" # off|minimal|low|medium|high|xhigh|max
 timeout = 600
 first_run_timeout = 1500
 

@@ -116,6 +116,7 @@ currently include:
 
 - Claude Code
 - Codex
+- Pi session history
 - OpenCode (legacy + OpenCode 2.0 v2 SQLite schemas)
 - Cursor
 - GitHub Copilot
@@ -161,6 +162,7 @@ Syke is local-machine first.
 - Identity/runtime context: `~/.syke/PSYCHE.md`
 - Adapter guides: `~/.syke/adapters/{source}.md`
 - Pi provider/runtime state: `~/.syke/pi-agent/`
+- External Pi session history: `~/.pi/agent/sessions/**/*.jsonl`
 
 On macOS, ask and synthesis run Pi under a filesystem sandbox when available.
 The sandbox grants scoped local reads, Syke workspace writes, temp writes, and

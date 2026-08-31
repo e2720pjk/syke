@@ -106,7 +106,7 @@ Instead, each harness gets an **adapter markdown** installed at `~/.syke/adapter
 - how to read it (JSONL structure, SQLite schemas, JSON layout)
 - what to look for (sessions, turns, tool calls, timestamps)
 
-The agent reads harness data directly using bash and sqlite3 during synthesis and ask.
+The agent reads harness data directly using bash and sqlite3 during synthesis and ask. Pi is both the canonical runtime and an active ingestion source: the `pi` adapter reads external Pi history from `~/.pi/agent/sessions/**/*.jsonl`. Syke deliberately excludes its own `~/.syke/sessions/` runtime audit files and `~/.syke/pi-agent/` state so synthesis cannot ingest its own prompts or credentials.
 
 #### OpenCode read boundary (LLM-first)
 

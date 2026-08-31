@@ -11,11 +11,12 @@ import json
 from pathlib import Path
 
 from syke.config import SYNC_THINKING_LEVEL
+from syke.config_file import THINKING_LEVELS
 from syke.pi_state import build_pi_agent_env
 
 
 def _normalize_thinking_level(level: str | None) -> str:
-    if level in {"off", "minimal", "low", "medium", "high", "xhigh"}:
+    if level in THINKING_LEVELS:
         return level
     return "medium"
 

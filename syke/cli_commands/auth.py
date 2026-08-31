@@ -46,8 +46,7 @@ def _ensure_auth_runtime() -> None:
         ensure_pi_binary()
     except (OSError, RuntimeError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
         raise SykeRuntimeException(
-            "Pi runtime is unavailable. Install Node.js "
-            "(>= 20; 22 LTS recommended) and rerun `syke setup`."
+            "Pi runtime is unavailable. Install Node.js (>= 22.19.0) and rerun `syke setup`."
         ) from exc
 
 
