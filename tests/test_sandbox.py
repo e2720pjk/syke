@@ -94,9 +94,7 @@ def test_harness_override_still_excludes_syke_owned_paths(monkeypatch, tmp_path:
     excluded = Path.home() / ".syke"
     monkeypatch.setenv(
         "SYKE_SANDBOX_HARNESS_PATHS",
-        os.pathsep.join(
-            [str(allowed), str(excluded / "sessions"), str(excluded / "pi-agent")]
-        ),
+        os.pathsep.join([str(allowed), str(excluded / "sessions"), str(excluded / "pi-agent")]),
     )
 
     assert _harness_read_paths() == [str(allowed.resolve())]

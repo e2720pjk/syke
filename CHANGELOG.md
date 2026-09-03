@@ -388,7 +388,6 @@ portable memory agent that can run locally and distribute itself through the CLI
 and skill surfaces power users already live inside.
 
 ### Highlights
-
 - Pi replaces the older proxy-heavy runtime path and becomes the canonical agent
   execution engine for ask, synthesis, daemon work, and replay.
 - The memory system now runs around a clean authority split:
@@ -401,7 +400,6 @@ and skill surfaces power users already live inside.
   workspace contract instead of drifting between legacy paths.
 
 ### Added
-
 - Pi-native runtime surfaces:
   - `syke.llm.pi_client`
   - `syke.llm.pi_runtime`
@@ -428,7 +426,6 @@ and skill surfaces power users already live inside.
   - `scripts/smoke-artifact-install.sh`
 
 ### Changed
-
 - Pi is now the only runtime. Runtime selection no longer drifts across older
   backend stories.
 - Setup now follows an inspect-first local plan:
@@ -458,7 +455,6 @@ and skill surfaces power users already live inside.
 - The project is now licensed under `AGPL-3.0-only`.
 
 ### Fixed
-
 - Stale workspace and snapshot corruption paths in the Pi runtime and synthesis
   loop
 - Synthesis locking and memex sync edge cases
@@ -469,7 +465,6 @@ and skill surfaces power users already live inside.
 - Test isolation issues that were masking release-readiness regressions
 
 ### Removed
-
 - Legacy runtime and compatibility surfaces that no longer matched the Pi-native
   system
 - Old proxy and LiteLLM-heavy paths from the hot runtime loop
@@ -478,17 +473,16 @@ and skill surfaces power users already live inside.
   branch-era complexity into the release surface
 
 ### Validation
-
 - Full test suite: `561 passed, 10 skipped`
 - Release build, `twine check`, and smoke artifact install all pass
 - CI, publish, and PyPI release gates are green for `v0.5.0`
+
 
 ## [0.4.6] — 2026-03-12 — "The Gateway"
 
 Multi-provider LLM gateway, synthesis pipeline rewrite, CLI overhaul, documentation rethink. 48 commits, 52 files changed.
 
 ### Added
-
 - **LiteLLM gateway** (`syke/llm/litellm_config.py`, `litellm_proxy.py`) — 10 providers through a unified dispatch layer. Azure, Azure AI Foundry, OpenAI, OpenRouter, Ollama, vLLM, llama.cpp, Kimi, z.ai alongside existing Codex + Claude login
 - **Provider-specific env resolution** (`syke/llm/env.py`) — each provider gets explicit env var wiring, no silent fallbacks
 - **`[providers]` config section** — TOML configuration for per-provider settings (endpoint, model, base URL)
@@ -498,7 +492,6 @@ Multi-provider LLM gateway, synthesis pipeline rewrite, CLI overhaul, documentat
 - **Lint gate on publish** — `publish.yml` now runs ruff format + check before tests, preventing PyPI push with lint failures
 
 ### Fixed
-
 - **LiteLLM streaming crash** — v1.82.0 `reasoning_content` block type mismatch (block says "text", delta says "thinking_delta") crashed Claude Agent SDK. Patched block type alignment
 - **Synthesis pipeline** — rewritten with `finalize_memex` tool contract + Stop hook enforcement. Agent must call the tool, hook terminates the loop. No ambiguous completions
 - **Setup flow** (5 bugs) — daemon always installing, race condition after daemon start, misleading "0 sessions" display, codex credential verification, provider picker default
@@ -508,7 +501,6 @@ Multi-provider LLM gateway, synthesis pipeline rewrite, CLI overhaul, documentat
 - **CI lint errors** — B904 `raise SystemExit` in except clause, F401 unused import. CI was broken since Mar 8
 
 ### Changed
-
 - **README** rewritten — positioning, architecture diagram, Persona benchmark comparisons, research references (RLM, ALMA, ACE, DSPy, GEPA)
 - **ARCHITECTURE.md** overhauled — design thesis, graph section, ASCII diagrams, provider auth guide (459 lines)
 - **MEMEX_EVOLUTION.md** rewritten — research positioning paper with emergence evidence from 111 memex versions
@@ -517,22 +509,20 @@ Multi-provider LLM gateway, synthesis pipeline rewrite, CLI overhaul, documentat
 - **Dead code purge** — deleted UserProfile, ActiveThread, VoicePattern models, formatters.py, experiments/perception/ (net -5,000 lines)
 
 ### Tests
-
 - 337 passing, 12 skipped (was 286)
 - New: `test_litellm_config.py`, `test_litellm_proxy.py`, LiteLLM integration matrix, auth backward compat, CLI auth set tests
 
 ### Infrastructure
-
 - Publish workflow gates on lint + tests before PyPI push
 - Branch protection requires test (3.12), test (3.13), test (3.14)
 - TCC-protected binary path rejection in daemon LaunchAgent
+
 
 ## [0.4.5] — 2026-03-07 — "The Blueprint"
 
 Configuration file system. All 70+ hardcoded values now configurable via `~/.syke/config.toml` — models, budgets, paths, sources, privacy filters. TOML format, zero new dependencies.
 
 ### Added
-
 - **Config file** (`~/.syke/config.toml`) — TOML-based configuration with 12 typed sections: identity, provider, models, sources, synthesis, daemon, ask, rebuild, distribution, privacy, paths
 - **`syke config` CLI** — `syke config init` generates commented config, `syke config show` displays effective config (merged defaults + file + env), `syke config show --raw` prints TOML, `syke config path` prints location
 - **Per-task model selection** — `[models]` section: pick different models for synthesis (cheap), ask (interactive), rebuild (expensive). Forward-compatible with `provider/model` format for future multi-provider routing
@@ -541,25 +531,23 @@ Configuration file system. All 70+ hardcoded values now configurable via `~/.syk
 - **22 new tests** — defaults, TOML parsing, nested sections, hyphen-to-underscore mapping, unknown key handling, malformed file recovery, path expansion, template roundtrip, full schema validation
 
 ### Changed
-
 - `syke/config.py` rewritten to load from config file at startup, all module-level constants now sourced from `SykeConfig` dataclass with env var overrides
 - 7 modules wired to centralized config paths: ingestion (claude_code, codex), distribution (context_files, hermes), LLM (auth_store, codex_proxy), sync, daemon
 - `SYNC_EVENT_THRESHOLD` and `DAEMON_INTERVAL` moved from local definitions to config system
 - Test suite: 264 → 286 tests
 
 ### Technical
-
 - Built on `tomllib` (Python 3.11+ stdlib) — zero new dependencies
 - 12 frozen dataclasses for type-safe config access
 - `get_type_hints()` for correct nested dataclass resolution under `from __future__ import annotations`
 - Template-based config generation (TOML write without write library)
+
 
 ## [0.4.4] — 2026-03-06 — "The Switchboard"
 
 Model-agnostic multi-provider support. Use your existing AI subscriptions — ChatGPT Plus, Claude Max, OpenRouter, z.ai — and Syke works with any of them.
 
 ### Added
-
 - **Multi-provider core** (`syke/llm/`) — provider registry, resolution with precedence (CLI flag > env > auth.json > auto-detect), environment isolation per provider
 - **Codex translator proxy** (`syke/llm/codex_proxy.py`) — local HTTP server translates Claude Messages API to OpenAI Responses API, enables ChatGPT Plus via Codex CLI
 - **Auth CLI** — `syke auth set <provider> --api-key` (stores + auto-activates), `syke auth use`, `syke auth status` with provider discovery
@@ -569,7 +557,6 @@ Model-agnostic multi-provider support. Use your existing AI subscriptions — Ch
 - **Codex ingestion** — `syke sync` imports Codex CLI sessions from `~/.codex/`
 
 ### Changed
-
 - `syke setup` always shows provider picker — no silent auto-select, even with auto-detected auth
 - Setup no longer gates on `claude login` — works with any provider from first run
 - Removed `syke login` alias (was pure wrapper with zero unique logic)
@@ -577,34 +564,31 @@ Model-agnostic multi-provider support. Use your existing AI subscriptions — Ch
 - Test suite pruned from 276 → 261 (removed duplicates and low-signal assertions)
 
 ### Infrastructure
-
 - **Ruff linting enforced** — `ruff check` + `ruff format --check` in CI, rules: E, F, I, UP, B, line-length 100, target py312
 - **CI pipeline evolved** — 3 jobs (lint → test matrix 3.12/3.13 → build), reusable `_tests.yml` workflow, concurrency cancellation, pip caching, minimal permissions, timeouts
 - **Publish workflow** reuses `_tests.yml` for test gate, adds build verification before PyPI upload
 - **Pre-release doc audit** — SKILL.md, README, CONTRIBUTING.md, context preamble updated for multi-provider; stale version refs and claude-login assumptions fixed across 9 files
 
 ### Supported Providers
-
 | Provider | Auth | Method |
-| ---------- | ------ | -------- |
+|----------|------|--------|
 | `claude-login` | Claude Max/Team/Enterprise | Session auth (no API key) |
 | `codex` | ChatGPT Plus/Pro | Reads `~/.codex/auth.json` |
 | `openrouter` | OpenRouter | API key |
 | `zai` | z.ai | API key |
+
 
 ## [0.4.3] — 2026-02-26 — "The Voice"
 
 Syke speaks. Streaming ask, behavioral skill rewrite, resilience hardening, docs decoupled from CLAUDE.md.
 
 ### Added
-
 - **Streaming `syke ask`** — real-time output with thinking→stderr (dim italic), text→stdout, tool calls→stderr (dim), cost footer on stderr. AskEvent dataclass, `ask_stream()` entry point, StreamEvent delta handling. 16 new tests.
 - **Ask timeout & early-output resilience** — `asyncio.wait_for` with 120s configurable timeout (`ASK_TIMEOUT`), early stdout byte before SDK init prevents premature process kill, SIGTERM handler dumps local fallback before exit. Fixes empty output bug where 3.6–7.5s thinking window produced zero stdout.
 - **SKILL.md behavioral rewrite** — repositioned from identity-query tool to behavioral contract. Agents proactively read and write through natural trigger framing, not explicit checklists. Description catches implicit intent through positioning.
 - **SVG architecture diagram** — light/dark GitHub theme support via `<picture>` element.
 
 ### Changed
-
 - Docs decoupled from CLAUDE.md — README, SKILL.md, SETUP.md, MEMEX_EVOLUTION.md, context_files.py all use platform-agnostic "memex" wording. The memex is its own thing, not "the CLAUDE.md file."
 - CONTRIBUTING.md: "CLAUDE.md injection" → "Memex distribution"
 - `CancelledError` cleanup for graceful SDK shutdown
@@ -612,16 +596,15 @@ Syke speaks. Streaming ask, behavioral skill rewrite, resilience hardening, docs
 - 393 tests passing (was 389).
 
 ### Fixed
-
 - Empty `syke ask` output when process killed during SDK init window (closes #2)
 - Streaming support for `syke ask` (closes #6)
+
 
 ## [0.4.2] — 2026-02-25 — "The Harness"
 
 Cross-agent memory distribution. Syke now installs itself into other AI agents on your system.
 
 ### Added
-
 - **Harness adapter system** (`syke/distribution/harness/`) — framework for installing Syke context into other AI agents. HarnessAdapter ABC with detect/install/status/uninstall interface, protocol-resilient design (adapters declare protocol + version).
 - **Hermes adapter** — full A/B test mode: installs SKILL.md at `~/.hermes/skills/memory/syke/`, coexists with native MEMORY.md + USER.md without touching them.
 - **Claude Desktop adapter** — adds Syke data dir to `localAgentModeTrustedFolders` in config JSON.
@@ -633,27 +616,24 @@ Cross-agent memory distribution. Syke now installs itself into other AI agents o
 - SKILL.md updated with `record` command docs and `license: MIT` per agentskills.io spec.
 
 ### Fixed
-
 - Dashboard reads memex from DB and daemon from launchd (was checking stale file paths).
 - Removed 4 dead imports: `user_data_dir` (cli.py), `Path` (synthesis.py), `bootstrap_memex_from_profile` (synthesis.py), `SykeDB` (gmail.py).
 - Cleaned stale pycache files from removed modules.
 
 ### Changed
-
 - Harness `install_all()` runs during `syke setup` Step 4 (auto-connects detected agents).
 - Daemon synthesis refresh triggers harness re-install (keeps agent context fresh).
 - Test counts updated across docs (346→361 in README, CONTRIBUTING, ARCHITECTURE).
 - 389 tests passing (was 346).
 
+
 ## [0.4.1] — 2026-02-24
 
 ### Breaking
-
 - Removed ANTHROPIC_API_KEY support entirely. Auth is now Agent SDK auth-only — Syke never manages API keys or tokens. Users must run `claude login` to authenticate.
 - `syke setup` now requires auth (hard fail without it). No "data-only" mode.
 
 ### Added
-
 - `syke ask "question"` promoted from hidden to primary CLI command
 - `syke memex` — dump current memex to stdout
 - `syke doctor` — verify auth, daemon, DB health
@@ -662,7 +642,6 @@ Cross-agent memory distribution. Syke now installs itself into other AI agents o
 - MCP ask() tool now has bounded ~50s timeout (resolves timeout issues with Claude Desktop)
 
 ### Fixed
-
 - daemon/metrics.py: Fixed crash from importing nonexistent GITHUB_TOKEN from config
 - Removed env_patch mechanism that cleared API keys when session auth was available
 - Removed internal Agent SDK parser monkey patch; ask() now uses public SDK APIs only
@@ -707,19 +686,16 @@ Patch ask() to survive two CLI 2.1.45 breaking changes: nested session protectio
 ask() is now resilient to API throttling; agent config is env-overridable.
 
 ### Fixed
-
 - ask() no longer crashes on unknown stream events (e.g. `rate_limit_event`) — catches `ClaudeSDKError`, logs a warning, and returns a partial answer instead of erroring out
 - Upgrade `claude-agent-sdk` floor to 0.1.38
 - Timeline display: readable timestamps, colors, no line-wrapping, clean titles
 
 ### Changed
-
 - Agent config centralized in `syke/config.py` — model, budget, and turn settings are all env-overridable (`SYKE_ASK_MODEL`, `SYKE_ASK_BUDGET`, `SYKE_SYNC_MODEL`, `SYKE_REBUILD_MODEL`, etc.)
 - ask() budget raised from $0.15 to $1.00 default (analysis of 313 sessions showed $0.15 was insufficient for Opus-tier accounts; override with `SYKE_ASK_BUDGET`)
 - Removed scattered model constants (`DEFAULT_MODEL`, `FULL_MODEL`, `INCREMENTAL_MODEL`); replaced with `ASK_*`, `SYNC_*`, `REBUILD_*` groups
 
 ### Added
-
 - ask() now tracks cost/usage metrics to `metrics.jsonl` via `_log_ask_metrics`
 
 ## [0.3.2] — 2026-02-18 — "Claude Code Auth: Clean Slate"
@@ -727,7 +703,6 @@ ask() is now resilient to API throttling; agent config is env-overridable.
 Session auth is now the primary path for all Claude Code users.
 
 ### Fixed
-
 - MCP config (`~/.claude.json`, Claude Desktop, project `.mcp.json`) no longer bakes in `ANTHROPIC_API_KEY` — MCP subprocess handles it via `config.py` at startup
 - Cron/daemon entry no longer embeds `ANTHROPIC_API_KEY` in the crontab line
 - `ask()` overrides stale `ANTHROPIC_API_KEY` with `""` when `~/.claude/` is present, forcing session auth (env_patch)
@@ -736,7 +711,6 @@ Session auth is now the primary path for all Claude Code users.
 - `setup` no longer persists `ANTHROPIC_API_KEY` when `claude login` auth is present (b6e300d)
 
 ### Added
-
 - Setup now shows cost notice when API-key-only path is used (~$0.78/build, ~$0.02/ask)
 - 67 new tests for `claude_code` and `github_` ingestion adapters (378 total)
 - Architecture docs FileTree corrected to match actual filenames
@@ -744,7 +718,6 @@ Session auth is now the primary path for all Claude Code users.
 ## [0.3.0] — 2026-02-18 — "The Agent Knows Itself"
 
 ### Added
-
 - `syke self-update` command: upgrades syke to the latest PyPI release, stop/restart
   daemon around the upgrade, handles pipx/pip/uvx/source install methods gracefully
 - `syke/version_check.py`: stdlib-only PyPI version checker with 24-hour disk cache,
@@ -756,7 +729,6 @@ Session auth is now the primary path for all Claude Code users.
 - 16 new tests: `test_version_check.py` (11), `test_cli_self_update.py` (5)
 
 ### Changed
-
 - `db.py`: contributor migration invariant comment above `_MIGRATIONS`
 - `tests/test_daemon.py`: +2 version-drift tests, fixed `check_update_available` mock,
   log-line-count assertion in `test_sync_cycle_warns_on_update`
@@ -766,13 +738,11 @@ Session auth is now the primary path for all Claude Code users.
 First public release with clean git history.
 
 ### Changed
-
 - Repository history cleaned for public open source release
 - All PII and sensitive development artifacts removed from git history
 - Complete test suite maintained (297 tests passing)
 
 ### Note
-
 This is the first public release with clean git history. All previous development history has been archived. Previous PyPI versions (0.2.1-0.2.8) are being deprecated.
 
 ## [0.2.8] — 2026-02-16 — "Ship-Ready"
@@ -873,25 +843,21 @@ Tests: 233 pass with API key, 232 pass + 1 skip without API key.
 
 Background sync daemon ships as a core feature with automatic cost optimization.
 
-### Daemon
-
+**Daemon**
 - Background sync daemon now ships with pip package
 - New CLI commands: `daemon-start`, `daemon-stop`, `daemon-status`
 - Integrated into `syke setup` with interactive prompt
 - Automatically syncs every 15 minutes (configurable)
 
-### Cost Optimization
-
+**Cost Optimization**
 - Skip perception when no new events exist (saves ~$0.50 per daemon cycle)
 - Cap profile size in incremental updates to prevent unbounded growth
 
-### MCP Server
-
+**MCP Server**
 - Add async `ask()` tool for natural language queries about the user
 - Timeline and search tools now return summaries by default (pass `summary=false` for full content)
 
-### Perception
-
+**Perception**
 - Add `world_state` field: precise map of user's current projects and status
 - Agentic perception now default for `syke sync` (pass `--legacy` for single-shot mode)
 

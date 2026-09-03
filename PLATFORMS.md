@@ -3,7 +3,7 @@
 ## Ingestion (data into Syke)
 
 | Platform | Local Artifact Contract | Status |
-| ---------- | ------------------------- | -------- |
+|----------|-------------------------|--------|
 | Claude Code | `~/.claude/projects/**/*.jsonl`, `~/.claude/transcripts/*.jsonl` | Active |
 | Codex | rollout JSONL under `~/.codex/sessions` / `archived_sessions`, plus `session_index.jsonl` and SQLite metadata | Active |
 | Pi | recursive session JSONL under `~/.pi/agent/sessions` (external Pi history only) | Active |
@@ -20,7 +20,7 @@
 Syke currently supports only three distribution surfaces:
 
 | Surface | Path | Status |
-| --------- | ------ | -------- |
+|---------|------|--------|
 | CLI | `syke ask`, `syke memex`, `syke record`, `syke doctor`, `syke setup` | Active |
 | MEMEX artifact | exported memex at `~/.syke/MEMEX.md` | Active |
 | Capability registration | canonical Syke capability package installed to detected skill/capability surfaces, plus native wrappers where needed | Active |
@@ -28,7 +28,6 @@ Syke currently supports only three distribution surfaces:
 ## Adding a Platform
 
 Agents should update this table when they:
-
 - Add or validate a real adapter/runtime path
 - Fit a new agent into one of the three supported distribution surfaces
 - Promote an experimental ingestion path to active

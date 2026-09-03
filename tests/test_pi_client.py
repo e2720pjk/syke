@@ -486,9 +486,7 @@ def test_ensure_pi_binary_writes_stable_launcher_from_existing_runtime(
 
     pi_cli.parent.mkdir(parents=True, exist_ok=True)
     pi_cli.write_text("console.log('pi');", encoding="utf-8")
-    (pi_cli.parent.parent / "package.json").write_text(
-        '{"version":"0.84.1"}\n', encoding="utf-8"
-    )
+    (pi_cli.parent.parent / "package.json").write_text('{"version":"0.84.1"}\n', encoding="utf-8")
     real_node.write_text(
         '#!/bin/sh\nif [ "$1" = "--version" ]; then echo v24.18.1; exit 0; fi\nexit 0\n',
         encoding="utf-8",
@@ -520,7 +518,7 @@ def test_ensure_pi_binary_writes_stable_launcher_from_existing_runtime(
     assert pi_cli.read_text(encoding="utf-8") == "console.log('pi');"
 
 
-@pytest.mark.parametrize("manifest", ['{"version":"0.83.0"}\n', '{}\n'])
+@pytest.mark.parametrize("manifest", ['{"version":"0.83.0"}\n', "{}\n"])
 def test_ensure_pi_binary_reinstalls_stale_or_unknown_managed_runtime(
     tmp_path: Path,
     monkeypatch,
@@ -576,9 +574,7 @@ def test_get_pi_version_uses_launcher_in_minimal_env(tmp_path: Path, monkeypatch
 
     pi_cli.parent.mkdir(parents=True, exist_ok=True)
     pi_cli.write_text("console.log('pi');", encoding="utf-8")
-    (pi_cli.parent.parent / "package.json").write_text(
-        '{"version":"0.84.1"}\n', encoding="utf-8"
-    )
+    (pi_cli.parent.parent / "package.json").write_text('{"version":"0.84.1"}\n', encoding="utf-8")
     real_node.write_text(
         "#!/bin/sh\necho v24.18.1 >&2\nexit 0\n",
         encoding="utf-8",

@@ -27,7 +27,7 @@ for brainstorming and research while you work with your main coding agents.
 
 The development is deliberately experimental, partial and doesn't support popular features.
 
-PS: The harness trains in multiple memory environments to test and research self learning capabilities.
+PS: The harness trains in multiple memory environments to test and research self learning capabilities. 
 
 Still useful and more capable than popular solutions from day one. So do try it.  
 
@@ -45,7 +45,7 @@ uv tool install syke
 syke setup
 ```
 
-`syke setup` is interactive. It inspects your machine for your active harnesses. Uses Pi agent core for auth and runtime.
+`syke setup` is interactive. It inspects your machine for your active harnesses. Uses Pi agent core for auth and runtime. 
 
 ## First Run
 
@@ -94,7 +94,7 @@ The important split:
 
 ## Local Timeline
 
-Syke serves a private local timeline. It is for visualization only.
+Syke serves a private local timeline. It is for visualization only. 
 
 ```bash
 syke web --open

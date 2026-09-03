@@ -1415,8 +1415,7 @@ def test_adapter_documents_statuses_detection_merge_and_bounds() -> None:
     assert "chosen.fork_boundary" in text
     assert "SELECT id, parent_id, fork_session_id, fork_boundary," in text
     assert (
-        "SELECT id, NULL AS parent_id, NULL AS fork_session_id,\n"
-        "         NULL AS fork_boundary,"
+        "SELECT id, NULL AS parent_id, NULL AS fork_session_id,\n         NULL AS fork_boundary,"
     ) in text
     assert "state.output" in text
 
