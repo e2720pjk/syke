@@ -116,7 +116,8 @@ currently include:
 
 - Claude Code
 - Codex
-- OpenCode
+- Pi session history
+- OpenCode (legacy + OpenCode 2.0 v2 SQLite schemas)
 - Cursor
 - GitHub Copilot
 - Antigravity
@@ -124,6 +125,16 @@ currently include:
 - Gemini CLI
 
 See [PLATFORMS.md](PLATFORMS.md) for exact artifact paths and current status.
+
+OpenCode discovery reads only `~/.local/share/opencode/opencode*.db`. The
+LLM-first adapter opens the live WAL-mode database read-only (never
+`immutable=1`), excludes `-wal`/`-shm` sidecars, detects whichever legacy/v2
+tables exist, and keeps session metadata v2-authoritative with union recency.
+Chat rows are read separately and keyed by stable message ID (v2 wins duplicate
+rows; legacy-only rows are reconstructed from parts), with bounded pages and
+truncated content. There is no Python OpenCode ingest parser. Existing
+customized adapter guides are never overwritten; run `syke connect` to see a
+manual repair hint.
 
 ## How Agents Use Syke
 
@@ -151,6 +162,7 @@ Syke is local-machine first.
 - Identity/runtime context: `~/.syke/PSYCHE.md`
 - Adapter guides: `~/.syke/adapters/{source}.md`
 - Pi provider/runtime state: `~/.syke/pi-agent/`
+- External Pi session history: `~/.pi/agent/sessions/**/*.jsonl`
 
 On macOS, ask and synthesis run Pi under a filesystem sandbox when available.
 The sandbox grants scoped local reads, Syke workspace writes, temp writes, and

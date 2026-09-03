@@ -105,7 +105,21 @@ Instead, each harness gets an **adapter markdown** installed at `~/.syke/adapter
 - how to read it (JSONL structure, SQLite schemas, JSON layout)
 - what to look for (sessions, turns, tool calls, timestamps)
 
-The agent reads harness data directly using bash and sqlite3 during synthesis and ask.
+The agent reads harness data directly using bash and sqlite3 during synthesis and ask. Pi is both the canonical runtime and an active ingestion source: the `pi` adapter reads external Pi history from `~/.pi/agent/sessions/**/*.jsonl`. Syke deliberately excludes its own `~/.syke/sessions/` runtime audit files and `~/.syke/pi-agent/` state so synthesis cannot ingest its own prompts or credentials.
+
+#### OpenCode read boundary (LLM-first)
+
+OpenCode is intentionally an adapter-markdown path, not a Python ingest
+parser. The shipped guide describes how the agent can inspect the live,
+WAL-aware SQLite database read-only and reason over bounded pages; Syke never
+copies OpenCode conversations into an intermediate ledger and never writes to
+OpenCode's database. Schema detection precedes every query because a source
+may be legacy-only, v2-only, or mixed. Session metadata may use v2-precedence
+and union recency, but chat rows are read separately and merged in memory by
+stable message ID (v2 wins a duplicate; legacy-only rows are reconstructed
+from their parts). The guide also defines the allowlist, privacy boundary,
+truncation, and pagination rules so raw JSON, reasoning blobs, and tool output
+do not become unbounded evidence.
 
 ### Observe Bootstrap
 

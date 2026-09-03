@@ -23,11 +23,18 @@ SYKE_DB = WORKSPACE_ROOT / "syke.db"
 MEMEX_PATH = WORKSPACE_ROOT / "MEMEX.md"
 
 
-def initialize_workspace(*, selected_sources: tuple[str, ...] | None = None) -> None:
-    """Create the workspace structure.
+def initialize_workspace(
+    *,
+    workspace_root: Path | None = None,
+    home: Path | None = None,
+    selected_sources: tuple[str, ...] | None = None,
+) -> None:
+    """Create the workspace structure and source-reader prompt surface.
 
-    Called once at setup/daemon startup. Creates dirs, installs adapter
-    markdowns from seeds, writes PSYCHE.md. Idempotent.
+    Called at setup/daemon startup and before direct Pi cycles. Creates dirs,
+    installs adapter markdowns from seeds, and writes PSYCHE.md. Idempotent.
+    ``workspace_root`` and ``home`` are injectable for replay/custom runtimes;
+    omitted values preserve the process-wide workspace behavior.
 
     MEMEX.md is NOT written here — synthesis owns MEMEX creation.
     syke.db is NOT created here — SykeDB constructor handles that.
@@ -35,16 +42,18 @@ def initialize_workspace(*, selected_sources: tuple[str, ...] | None = None) -> 
     import logging
 
     logger = logging.getLogger(__name__)
+    root = workspace_root or WORKSPACE_ROOT
+    sessions_dir = SESSIONS_DIR if workspace_root is None else root / "sessions"
 
-    WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
-    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
+    sessions_dir.mkdir(parents=True, exist_ok=True)
 
     from syke.observe.bootstrap import ensure_adapters
 
-    ensure_adapters(WORKSPACE_ROOT, selected_sources=selected_sources)
+    ensure_adapters(root, selected_sources=selected_sources)
 
     from syke.runtime.psyche_md import write_psyche_md
 
-    write_psyche_md(WORKSPACE_ROOT, selected_sources=selected_sources)
+    write_psyche_md(root, home=home, selected_sources=selected_sources)
 
-    logger.debug("Workspace initialized at %s", WORKSPACE_ROOT)
+    logger.debug("Workspace initialized at %s", root)

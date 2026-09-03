@@ -1,9 +1,11 @@
+# pyright: reportMissingImports=false
+
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 
 import syke
 from syke.config import PROJECT_ROOT
@@ -125,7 +127,7 @@ def test_install_skill_installs_only_to_detected_platforms(tmp_path: Path) -> No
     skill_text = (claude_dir / "skills" / "syke" / "SKILL.md").read_text()
     assert "~/.syke/MEMEX.md" in skill_text
     assert f"version: {syke.__version__}" in skill_text
-    assert "Node.js 20+ (22 LTS recommended)" in skill_text
+    assert "Node.js >= 22.19.0" in skill_text
 
 
 def test_packaged_skill_matches_repo_skill_contract() -> None:

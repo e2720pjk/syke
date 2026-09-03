@@ -42,6 +42,10 @@ A healthy first run should end with:
 - `~/.syke/syke.db` initialized
 - `~/.syke/MEMEX.md` available
 - adapter markdowns installed under `~/.syke/adapters/`
+- OpenCode adapter revision is an LLM-first, schema-detected guide for legacy
+  and v2 tables, uses v2 for duplicate session metadata, keyed-merges messages
+  by stable ID (v2 wins), reconstructs legacy-only parts, and excludes live
+  `-wal`/`-shm` sidecars
 - background service install either confirmed or clearly skipped/explained
 - local timeline available through `syke web`
 
@@ -53,7 +57,7 @@ syke setup --agent
 
 `--agent` returns JSON with a `status` field:
 
-- `needs_runtime` - install Node.js 20+ (22 LTS recommended) and rerun setup
+- `needs_runtime` - install Node.js >= 22.19.0 and rerun setup
 - `needs_provider` - configure provider auth and rerun setup
 - `complete` - setup finished
 - `failed` - inspect the returned `error`
@@ -227,6 +231,29 @@ Notes:
 
 - During setup, explicit `--source` values must be detected in that run or setup exits with a usage error.
 - The `--source` option is intentionally hidden from `--help` output but is part of the supported setup/sync automation contract.
+- Adapter seeds are upgraded only when the deployed file matches a known
+  untouched seed hash. If an adapter is customized, setup preserves it and
+  reports the path plus a manual repair step (review the shipped seed, or
+  delete the file and rerun `syke connect`); it never overwrites user edits.
+
+### OpenCode 2.0 read boundary
+
+OpenCode stores a live WAL-mode database at
+`~/.local/share/opencode/opencode.db`. Syke's adapter is a guide for the
+LLM-first read path, not a Python ingest parser: it reads with SQLite URI
+`mode=ro` and a busy timeout, and must not use `immutable=1`. It detects table
+presence before issuing queries, reads only the allowlisted
+session/project/workspace tables, and never reads credentials, accounts,
+events, pending/inbox, or share-secret tables. Reads are parameterized and
+`LIMIT`-bounded; raw JSON, conversation text, and tool output are paged and
+truncated, while reasoning blobs are summarized rather than emitted.
+
+Legacy `session/message/part` and v2 `session_v2/session_message` streams may
+coexist. Session metadata uses v2 precedence plus union recency, but chat rows
+are never cross-joined or raw-unioned: the agent reads each stream separately,
+keys by stable message ID (v2 wins duplicates), and reads parts only for
+legacy-only messages. Cross-stream ordering uses an explicit reproducible key;
+it does not assume that one schema always follows the other.
 
 ## What Setup Writes
 
@@ -356,7 +383,7 @@ release.
 
 ## Troubleshooting
 
-- `needs_runtime` from `syke setup --agent`: install Node.js 20+ (22 LTS recommended).
+- `needs_runtime` from `syke setup --agent`: install Node.js >= 22.19.0.
 - Provider/auth failures: run `syke auth status` then `syke doctor`.
 - Empty/old memex: run `syke sync`, then `syke memex`.
 - Background service unavailable on macOS source checkouts under protected folders: use `syke install-current` and rerun setup.

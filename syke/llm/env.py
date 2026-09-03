@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from syke.llm.pi_client import get_pi_provider_catalog
+from syke.llm.pi_client import get_pi_provider_catalog, resolve_pi_model_pattern
 from syke.pi_state import (
     build_pi_agent_env,
     get_credential,
@@ -34,6 +34,16 @@ class ProviderReadiness:
 
 def _catalog_by_id() -> dict[str, object]:
     return {entry.id: entry for entry in get_pi_provider_catalog()}
+
+
+def _model_ids(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(model for model in value if isinstance(model, str) and model)
+
+
+def _model_is_available(provider_id: str, requested: str, model_ids: tuple[str, ...]) -> bool:
+    return resolve_pi_model_pattern(provider_id, requested, model_ids) is not None
 
 
 def resolve_provider(cli_provider: str | None = None) -> ProviderSelection:
@@ -86,8 +96,9 @@ def evaluate_provider_readiness(provider_id: str) -> ProviderReadiness:
     if entry is None:
         raise ValueError(f"Unknown provider {provider_id!r}")
 
-    models = getattr(entry, "models", ())
-    available_models = getattr(entry, "available_models", ())
+    models = _model_ids(getattr(entry, "models", ()))
+    available_models = _model_ids(getattr(entry, "available_models", ()))
+    validation_models = available_models or models
     oauth = bool(getattr(entry, "oauth", False))
     default_provider = get_default_provider()
     default_model = get_default_model()
@@ -110,7 +121,11 @@ def evaluate_provider_readiness(provider_id: str) -> ProviderReadiness:
                 f"Run `syke auth login {provider_id}` or use Pi's `/login` flow.",
             )
         if available_models:
-            if default_provider == provider_id and default_model and default_model not in models:
+            if (
+                default_provider == provider_id
+                and default_model
+                and not _model_is_available(provider_id, default_model, validation_models)
+            ):
                 return ProviderReadiness(
                     provider_id,
                     False,
@@ -124,7 +139,11 @@ def evaluate_provider_readiness(provider_id: str) -> ProviderReadiness:
         )
 
     if available_models:
-        if default_provider == provider_id and default_model and default_model not in models:
+        if (
+            default_provider == provider_id
+            and default_model
+            and not _model_is_available(provider_id, default_model, validation_models)
+        ):
             return ProviderReadiness(
                 provider_id,
                 False,

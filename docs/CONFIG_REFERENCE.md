@@ -4,6 +4,25 @@ Authoritative reference for `~/.syke/config.toml` in the current runtime.
 
 This document only covers the config model that actually exists in `syke/config_file.py` and `syke/config.py`.
 
+## OpenCode adapter (not a config section)
+
+OpenCode support is catalog- and seed-driven, not configured by a new TOML
+section. The LLM-first adapter guide supports the legacy `session/message/part`
+schema and OpenCode 2.0's `session_v2/session_message` schema in the live
+WAL-mode DB at `~/.local/share/opencode/opencode.db`; there is no Python
+OpenCode ingest parser. Discovery matches only `opencode*.db` (never
+`-wal`/`-shm`), opens read-only with `mode=ro` and a busy timeout (never
+`immutable=1`), and detects table presence before each schema-specific query.
+Session metadata uses v2 precedence for duplicate IDs and union recency; chat
+rows are read separately and keyed by stable message ID, with v2 winning and
+legacy-only parts reconstructed. Queries are bounded, parameterized, and
+truncated, and restricted to the allowlisted `session_v2`, `session_message`,
+`session`, `message`, `part`, `project`, and `workspace` tables; credentials,
+accounts, events, pending/inbox, and share secrets are never queried. The
+deployed seed upgrades only when its previous hash is known; customized
+adapters are preserved and repair is manual via the seed review or deleting the
+file and rerunning `syke connect`.
+
 ---
 
 ## Precedence
@@ -66,7 +85,7 @@ syke config path
 | Key | Type | Default | Meaning | Env override |
 |---|---|---|---|---|
 | `threshold` | `int` | `5` | Legacy config key (synthesis always runs; the agent decides via temporal context whether anything warrants updating) | `SYKE_SYNC_THRESHOLD` |
-| `thinking_level` | `string` | `"medium"` | Pi thinking level written to workspace settings | `SYKE_SYNC_THINKING_LEVEL` |
+| `thinking_level` | `string` | `"medium"` | Pi thinking level written to workspace settings (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`) | `SYKE_SYNC_THINKING_LEVEL` |
 | `timeout` | `int` | `600` | Wall-clock timeout in seconds | `SYKE_SYNC_TIMEOUT` |
 | `first_run_timeout` | `int` | `1500` | Wall-clock timeout for the first synthesis run | `SYKE_SYNC_FIRST_RUN_TIMEOUT` |
 
@@ -146,6 +165,10 @@ Syke now keeps Pi-native runtime state in:
 - `~/.syke/pi-agent/settings.json`
 - `~/.syke/pi-agent/models.json`
 
+External Pi history is an optional observation source, discovered separately
+from this managed state at `~/.pi/agent/sessions/**/*.jsonl`. Syke excludes
+`~/.syke/sessions/` and `~/.syke/pi-agent/` from Pi history discovery.
+
 Use the CLI to manage that state:
 
 ```bash
@@ -166,7 +189,7 @@ user = "saxenauts"
 timezone = "auto"
 
 [synthesis]
-thinking_level = "medium"
+thinking_level = "medium" # off|minimal|low|medium|high|xhigh|max
 timeout = 600
 first_run_timeout = 1500
 

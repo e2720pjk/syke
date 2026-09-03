@@ -1,3 +1,5 @@
+# pyright: reportMissingImports=false
+
 from __future__ import annotations
 
 import subprocess
@@ -10,6 +12,7 @@ from syke.cli_support.auth_flow import (
     ensure_setup_pi_runtime,
     invalid_setup_endpoint_input,
     provider_action_choices,
+    resolve_activation_model,
     term_menu_select_many,
 )
 from syke.cli_support.exit_codes import SykeRuntimeException
@@ -94,6 +97,26 @@ def test_term_menu_select_many_non_tty_prompt_interrupt_returns_none(
         selected = term_menu_select_many(["alpha", "beta"], title="pick")
 
     assert selected is None
+
+
+def test_resolve_activation_model_accepts_gpt56_alias_with_max_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "syke.llm.pi_client.get_pi_provider_catalog",
+        lambda: (
+            PiProviderCatalogEntry(
+                "openai-codex",
+                ("gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"),
+                ("gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"),
+                "gpt-5.5",
+                True,
+            ),
+        ),
+    )
+    monkeypatch.setattr("syke.pi_state.get_default_model", lambda: "gpt-5.6:max")
+
+    assert resolve_activation_model("openai-codex") == "gpt-5.6-terra:max"
 
 
 @pytest.mark.parametrize(

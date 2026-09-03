@@ -177,7 +177,7 @@ main() {
 
   if [[ "$status" == "needs_runtime" ]]; then
     log "$(json_get "$setup_json" "error")"
-    die "runtime missing. Install Node.js 20+ (22 LTS recommended) and rerun."
+    die "runtime missing. Install Node.js >= 22.19.0 and rerun."
   fi
 
   if [[ "$status" == "needs_provider" ]]; then

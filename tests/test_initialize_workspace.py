@@ -49,7 +49,8 @@ def test_installs_adapter_markdowns(tmp_path: Path, monkeypatch) -> None:
     _patch_workspace(monkeypatch, root)
     workspace.initialize_workspace()
     adapters = list((root / "adapters").glob("*.md"))
-    # At least some adapter markdowns should be installed from seeds
+    # Pi is an active source and its reader is shipped as a seed.
+    assert (root / "adapters" / "pi.md").exists()
     assert len(adapters) > 0
 
 

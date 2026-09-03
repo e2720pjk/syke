@@ -6,7 +6,8 @@
 |----------|-------------------------|--------|
 | Claude Code | `~/.claude/projects/**/*.jsonl`, `~/.claude/transcripts/*.jsonl` | Active |
 | Codex | rollout JSONL under `~/.codex/sessions` / `archived_sessions`, plus `session_index.jsonl` and SQLite metadata | Active |
-| OpenCode | SQLite DB under `~/.local/share/opencode/*.db`, including channel-named DBs | Active |
+| Pi | recursive session JSONL under `~/.pi/agent/sessions` (external Pi history only) | Active |
+| OpenCode | LLM-first read-only WAL-aware SQLite DB under `~/.local/share/opencode/opencode*.db`; schema-detected legacy `session/message/part` plus v2 `session_v2/session_message`, with WAL/SHM excluded and bounded keyed message merge | Active (legacy + OpenCode 2.0 v2) |
 | Cursor | official user-data roots under Cursor `workspaceStorage` / `globalStorage` | Active |
 | GitHub Copilot | Copilot CLI `~/.copilot/session-state/**/events.jsonl` plus VS Code `chatSessions` files | Active |
 | Antigravity | workflow artifacts under `~/.gemini/antigravity/brain` and browser recording metadata | Active |
@@ -34,7 +35,8 @@ Agents should update this table when they:
 For current active harnesses, setup is seed-first — there is no runtime factory anymore:
 
 - Syke ships seed adapters in-repo under `syke/observe/seeds/` for the active catalog
-- `initialize_workspace()` installs the shipped seed locally on first run (and re-syncs on updates)
+- `initialize_workspace()` installs shipped seeds locally on first run and upgrades only known untouched seed revisions
 - new harnesses arrive by adding a seed adapter markdown plus a `SourceSpec` to the catalog — no generated Python adapters, no dynamic loader
+- OpenCode's adapter seed revision is legacy+v2 aware (schema detection, v2-authoritative session metadata, stable message-ID merge, bounded legacy-part reconstruction); untouched older seeds upgrade automatically, while customized adapters are preserved and reported with manual repair guidance
 
 Updated by agents as they self-heal and add new platforms.

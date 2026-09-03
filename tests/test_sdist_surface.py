@@ -30,6 +30,7 @@ def test_built_sdist_excludes_internal_repo_surfaces(tmp_path: Path) -> None:
     assert any(name.endswith("/pyproject.toml") for name in names)
     assert any(name.endswith("/syke/entrypoint.py") for name in names)
     assert any(name.endswith("/syke/observe/seeds/adapter-codex.md") for name in names)
+    assert any(name.endswith("/syke/observe/seeds/adapter-pi.md") for name in names)
 
     forbidden_prefixes = (
         "tests/",

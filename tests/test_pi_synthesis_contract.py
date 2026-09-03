@@ -1,3 +1,5 @@
+# pyright: reportMissingImports=false, reportArgumentType=false, reportAttributeAccessIssue=false, reportOptionalSubscript=false, reportIndexIssue=false
+
 from __future__ import annotations
 
 import io
@@ -10,7 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 
 import syke.runtime as runtime_module
 from syke.db import SykeDB
@@ -18,6 +20,7 @@ from syke.llm import pi_client
 from syke.llm.backends import pi_synthesis
 from syke.memory.memex import update_memex
 from syke.models import Memory
+from syke.runtime import workspace
 
 
 def _memory_row(db: SykeDB, user_id: str, memory_id: str) -> dict | None:
@@ -87,7 +90,7 @@ def _pi_success_result(output: str = "done") -> SimpleNamespace:
 
 
 def test_db_validation_issues_defers_malformed_search_index_to_semantic_gate() -> None:
-    validation = {
+    validation: dict[str, object] = {
         "issues": [
             "syke.db integrity_check: malformed inverted index for FTS5 table main.memories_fts",
             "syke.db quick_check: malformed inverted index for FTS5 table main.memories_fts",
@@ -98,7 +101,7 @@ def test_db_validation_issues_defers_malformed_search_index_to_semantic_gate() -
 
 
 def test_db_validation_issues_keeps_real_database_failures() -> None:
-    validation = {
+    validation: dict[str, object] = {
         "issues": [
             "syke.db read error: database disk image is malformed",
             "syke.db integrity_check: *** in database main *** broken page map",
@@ -227,7 +230,9 @@ def test_sync_memex_normalizes_headered_canonical_db_row(
     assert active is not None
     assert active["id"] != old_id
     assert active["content"] == "canonical body"
-    assert _memory_row(db, user_id, old_id)["active"] == 0
+    old_row = _memory_row(db, user_id, old_id)
+    assert old_row is not None
+    assert old_row["active"] == 0
     written = memex_path.read_text(encoding="utf-8")
     assert written.startswith("# MEMEX [")
     assert pi_synthesis._strip_memex_header(written).strip() == "canonical body"
@@ -372,6 +377,193 @@ def test_sync_memex_restores_previous_when_canonical_row_disappears(
     assert written.startswith("# MEMEX [")
 
 
+def test_first_run_pi_synthesis_reaches_opencode_adapter_reference(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    home = tmp_path / "home"
+    opencode_root = home / ".local" / "share" / "opencode"
+    opencode_root.mkdir(parents=True)
+    opencode_db_path = opencode_root / "opencode.db"
+    with sqlite3.connect(opencode_db_path) as opencode_db:
+        opencode_db.executescript(
+            """
+            CREATE TABLE session_v2 (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                time_created INTEGER,
+                time_updated INTEGER,
+                agent TEXT,
+                model TEXT
+            );
+            CREATE TABLE session_message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                time_created INTEGER,
+                time_updated INTEGER,
+                data TEXT
+            );
+            """
+        )
+        opencode_db.execute(
+            "INSERT INTO session_v2 "
+            "(id, title, time_created, time_updated, agent, model) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("ses_v2_smoke", "OpenCode smoke", 1_000, 2_000, "build-agent", "model-anon"),
+        )
+        opencode_db.executemany(
+            "INSERT INTO session_message "
+            "(id, session_id, type, seq, time_created, time_updated, data) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    "msg_v2_user",
+                    "ses_v2_smoke",
+                    "user",
+                    1,
+                    1_001,
+                    1_001,
+                    json.dumps(
+                        {
+                            "text": "Remember the OpenCode v2 smoke path",
+                            "files": [],
+                            "agents": [],
+                            "time": {"created": 1_001},
+                        }
+                    ),
+                ),
+                (
+                    "msg_v2_assistant",
+                    "ses_v2_smoke",
+                    "assistant",
+                    2,
+                    1_002,
+                    1_002,
+                    json.dumps(
+                        {
+                            "agent": "build",
+                            "model": {"providerID": "test", "id": "model"},
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "id": "text_v2",
+                                    "text": "The v2 row is available.",
+                                },
+                                {
+                                    "type": "tool",
+                                    "id": "tool_v2",
+                                    "name": "read",
+                                    "state": {
+                                        "status": "completed",
+                                        "input": {"path": "README.md"},
+                                        "content": [{"type": "text", "text": "bounded result"}],
+                                        "structured": {},
+                                    },
+                                    "time": {"created": 1_002},
+                                },
+                            ],
+                            "time": {"created": 1_002},
+                        }
+                    ),
+                ),
+            ],
+        )
+        opencode_db.commit()
+        metadata = opencode_db.execute(
+            """
+            SELECT id,
+                   substr(title, 1, ?) AS title,
+                   time_created,
+                   time_updated,
+                   substr(agent, 1, ?) AS agent,
+                   substr(model, 1, ?) AS model
+            FROM session_v2
+            ORDER BY time_updated DESC, id ASC
+            LIMIT ?
+            """,
+            (64, 64, 64, 10),
+        ).fetchall()
+        assert metadata == [
+            ("ses_v2_smoke", "OpenCode smoke", 1_000, 2_000, "build-agent", "model-anon")
+        ]
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(workspace, "WORKSPACE_ROOT", workspace_root)
+    monkeypatch.setattr(workspace, "SESSIONS_DIR", workspace_root / "sessions")
+    monkeypatch.setattr(workspace, "SYKE_DB", workspace_root / "syke.db")
+    monkeypatch.setattr(workspace, "MEMEX_PATH", workspace_root / "MEMEX.md")
+    monkeypatch.setattr(pi_synthesis, "WORKSPACE_ROOT", workspace_root)
+    monkeypatch.setattr(pi_synthesis, "SESSIONS_DIR", workspace_root / "sessions")
+    monkeypatch.setattr(pi_synthesis, "SYKE_DB", workspace_root / "syke.db")
+    memex_path = workspace_root / "MEMEX.md"
+    monkeypatch.setattr(pi_synthesis, "MEMEX_PATH", memex_path)
+
+    workspace.initialize_workspace(selected_sources=("opencode",))
+    adapter_path = workspace_root / "adapters" / "opencode.md"
+    assert adapter_path.is_file()
+    psyche_path = workspace_root / "PSYCHE.md"
+    assert psyche_path.is_file()
+    assert "`adapters/opencode.md`" in psyche_path.read_text(encoding="utf-8")
+
+    db = SykeDB(workspace_root / "syke.db")
+    captured_prompts: list[str] = []
+    start_calls: list[dict[str, object]] = []
+
+    def _prompt(prompt: str, **_kwargs) -> SimpleNamespace:
+        captured_prompts.append(prompt)
+        memex_path.write_text(
+            "## OpenCode v2 smoke\n- The v2 session was surveyed.\n",
+            encoding="utf-8",
+        )
+        return _pi_success_result("OpenCode v2 smoke complete")
+
+    _install_success_runtime(monkeypatch, _prompt)
+    original_start = runtime_module.start_pi_runtime
+
+    def _start(**kwargs):
+        start_calls.append(kwargs)
+        return original_start(**kwargs)
+
+    monkeypatch.setattr(runtime_module, "start_pi_runtime", _start)
+
+    try:
+        result = pi_synthesis.pi_synthesize(
+            db,
+            user_id,
+            first_run=True,
+            selected_sources=("opencode",),
+            home=home,
+            workspace_root=workspace_root,
+            now_override=datetime(2026, 8, 28, 12, 0),
+        )
+
+        assert result["status"] == "completed"
+        assert result["memex_updated"] is True
+        assert captured_prompts
+        prompt = captured_prompts[0]
+        assert "`adapters/opencode.md`" in prompt
+        assert str(opencode_root.resolve()) in prompt
+        assert "<first_run_bootstrap>" in prompt
+        assert "opencode: 1 discovered files/rows" in prompt
+        assert start_calls == [
+            {
+                "workspace_dir": workspace_root,
+                "session_dir": workspace_root / "sessions",
+                "model": None,
+                "selected_sources": ("opencode",),
+            }
+        ]
+        memex = db.get_memex(user_id)
+        assert memex is not None
+        assert memex["content"] == "## OpenCode v2 smoke\n- The v2 session was surveyed."
+    finally:
+        db.close()
+
+
 def test_first_run_rejects_empty_memex_when_sources_have_history(
     user_id: str,
     tmp_path: Path,
@@ -388,7 +580,7 @@ def test_first_run_rejects_empty_memex_when_sources_have_history(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
     monkeypatch.setattr(
         pi_client,
@@ -488,7 +680,7 @@ def test_first_run_records_empty_memex_when_no_history(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
     monkeypatch.setattr(
         pi_client,
@@ -583,7 +775,7 @@ def test_first_run_still_fails_empty_memex_when_memory_exists(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
     monkeypatch.setattr(
         pi_client,
@@ -640,6 +832,77 @@ def test_first_run_still_fails_empty_memex_when_memory_exists(
         assert result["status"] == "failed"
         assert "canonical memex is unavailable" in str(result["error"])
         assert db.get_memex(user_id) is None
+    finally:
+        db.close()
+
+
+def test_pi_synthesize_initializes_selected_pi_source_and_projects_custom_workspace(
+    user_id: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = SykeDB(tmp_path / "syke.db")
+    update_memex(db, user_id, "existing canonical memex")
+    from syke.source_selection import set_selected_sources
+
+    set_selected_sources(user_id, ["pi"])
+    monkeypatch.setattr(
+        pi_synthesis,
+        "_validate_cycle_output",
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
+    )
+    monkeypatch.setattr(
+        pi_client,
+        "resolve_pi_launch_binding",
+        lambda model_override=None: pi_client.PiLaunchBinding(
+            provider="kimi-coding",
+            model=model_override or "k2p5",
+        ),
+    )
+
+    captured: dict[str, object] = {}
+    prompts: list[str] = []
+
+    def _prompt(prompt: str, **kwargs) -> SimpleNamespace:
+        prompts.append(prompt)
+        return _pi_success_result("kept existing memex")
+
+    runtime = SimpleNamespace(
+        is_alive=True,
+        model="k2p5",
+        prompt=_prompt,
+        status=lambda: {
+            "workspace": str(tmp_path),
+            "pid": 1,
+            "uptime_s": 1,
+            "session_count": 1,
+        },
+    )
+    monkeypatch.setattr(
+        runtime_module, "get_pi_runtime", lambda: (_ for _ in ()).throw(RuntimeError())
+    )
+
+    def _start(**kwargs):
+        captured.update(kwargs)
+        return runtime
+
+    monkeypatch.setattr(runtime_module, "start_pi_runtime", _start)
+
+    try:
+        result = pi_synthesis.pi_synthesize(db, user_id, workspace_root=tmp_path)
+
+        assert result["status"] == "completed"
+        assert captured["workspace_dir"] == tmp_path
+        assert captured["session_dir"] == tmp_path / "sessions"
+        selected = captured["selected_sources"]
+        assert isinstance(selected, tuple)
+        assert list(selected) == ["pi"]
+        assert prompts and "adapters/pi.md" in prompts[0]
+        assert (tmp_path / "adapters" / "pi.md").is_file()
+        psyche = (tmp_path / "PSYCHE.md").read_text(encoding="utf-8")
+        assert "adapters/pi.md" in psyche
+        projected = (tmp_path / "MEMEX.md").read_text(encoding="utf-8")
+        assert "existing canonical memex" in projected
     finally:
         db.close()
 
@@ -730,7 +993,9 @@ def test_pi_synthesize_waits_for_retry_settlement_before_marking_cycle_failed(
         ),
     )
     runtime = pi_client.PiRuntime(workspace_dir=tmp_path, model="k2p5")
-    runtime._process = SimpleNamespace(poll=lambda: None, pid=4242)
+    runtime._process = SimpleNamespace(  # type: ignore[assignment]
+        poll=lambda: None, pid=4242
+    )
     runtime._stream = pi_client.RpcEventStream(io.StringIO(""))
 
     def _send(payload: dict[str, object]) -> None:
@@ -903,8 +1168,12 @@ def test_pi_synthesize_uses_now_override_for_cycle_and_trace_timestamps(
         ).fetchone()
         assert latest_cycle["started_at"] == "2026-03-07T23:59:00-08:00"
         assert latest_cycle["completed_at"] == "2026-03-07T23:59:00-08:00"
-        assert captured["started_at"].isoformat() == "2026-03-07T23:59:00-08:00"
-        assert captured["completed_at"].isoformat() == "2026-03-07T23:59:00-08:00"
+        captured_started_at = captured["started_at"]
+        captured_completed_at = captured["completed_at"]
+        assert isinstance(captured_started_at, datetime)
+        assert isinstance(captured_completed_at, datetime)
+        assert captured_started_at.isoformat() == "2026-03-07T23:59:00-08:00"
+        assert captured_completed_at.isoformat() == "2026-03-07T23:59:00-08:00"
     finally:
         db.close()
 
@@ -920,7 +1189,7 @@ def test_pi_synthesize_versions_in_place_memex_mutation_before_marking_updated(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
     monkeypatch.setattr(
         pi_client,
@@ -1129,7 +1398,7 @@ def test_pi_synthesize_marks_replay_db_validation_issue_failed(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {
+        lambda **_kwargs: {
             "valid": False,
             "issues": ["syke.db read error: database disk image is malformed"],
             "stats": {"syke_db_path": str(tmp_path / "syke.db")},
@@ -1141,9 +1410,9 @@ def test_pi_synthesize_marks_replay_db_validation_issue_failed(
 
         assert result["status"] == "failed"
         assert "Cycle DB validation failed" in str(result["error"])
-        assert result["validation"]["issues"] == [
-            "syke.db read error: database disk image is malformed"
-        ]
+        validation = result["validation"]
+        assert isinstance(validation, dict)
+        assert validation["issues"] == ["syke.db read error: database disk image is malformed"]
         latest_cycle = db._conn.execute(
             "SELECT status, memex_updated FROM cycle_records WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
             (user_id,),
@@ -1164,7 +1433,9 @@ def test_pi_synthesize_pauses_replay_db_connection_during_agent(
 
     monkeypatch.setenv("SYKE_REPLAY_PAUSE_DB_CONNECTION_DURING_PI", "1")
     monkeypatch.setattr(
-        pi_synthesis, "_validate_cycle_output", lambda: {"valid": True, "issues": [], "stats": {}}
+        pi_synthesis,
+        "_validate_cycle_output",
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
     monkeypatch.setattr(
         pi_client,
@@ -1264,7 +1535,7 @@ def test_pi_synthesize_restores_recovery_point_when_semantic_gate_fails(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
 
     def _prompt(*args, **kwargs) -> SimpleNamespace:
@@ -1327,7 +1598,7 @@ def test_pi_synthesize_marks_stale_running_cycles_incomplete(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
     _install_success_runtime(monkeypatch, lambda *args, **kwargs: _pi_success_result())
 
@@ -1372,7 +1643,7 @@ def test_pi_synthesize_allows_small_replacement_revision(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
 
     def _prompt(*args, **kwargs) -> SimpleNamespace:
@@ -1398,6 +1669,8 @@ def test_pi_synthesize_allows_small_replacement_revision(
         assert result["status"] == "completed"
         old = _memory_row(db, user_id, "mem-revise-0")
         new = _memory_row(db, user_id, "mem-revise-new")
+        assert old is not None
+        assert new is not None
         assert old["active"] == 0
         assert old["superseded_by"] == "mem-revise-new"
         assert new["active"] == 1
@@ -1428,7 +1701,7 @@ def test_pi_synthesize_preserves_direct_active_memory_update(
     monkeypatch.setattr(
         pi_synthesis,
         "_validate_cycle_output",
-        lambda: {"valid": True, "issues": [], "stats": {}},
+        lambda **_kwargs: {"valid": True, "issues": [], "stats": {}},
     )
 
     def _prompt(*args, **kwargs) -> SimpleNamespace:
@@ -1490,8 +1763,12 @@ def test_pi_synthesize_repairs_malformed_search_index_during_cycle(
         result = pi_synthesis.pi_synthesize(db, user_id, workspace_root=tmp_path)
 
         assert result["status"] == "completed"
-        assert result["validation"]["valid"] is True
-        assert result["semantic_gate"]["valid"] is True
+        validation = result["validation"]
+        semantic_gate = result["semantic_gate"]
+        assert isinstance(validation, dict)
+        assert isinstance(semantic_gate, dict)
+        assert validation["valid"] is True
+        assert semantic_gate["valid"] is True
         assert db.conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         rows = db.conn.execute(
             """SELECT fts.memory_id

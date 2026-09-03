@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
-from uuid_extensions import uuid7
+from uuid_extensions import uuid7  # pyright: ignore[reportMissingImports]
 
 from syke.config import (
     CFG,
@@ -65,6 +65,15 @@ MEMEX_TOKEN_LIMIT = 2000
 CHARS_PER_TOKEN = 4
 
 
+def _safe_int(value: object, default: int = 0) -> int:
+    if not isinstance(value, (int, float, str, bytes, bytearray)):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 class SynthesisLockUnavailable(RuntimeError):
     """Raised when another synthesis cycle already holds the user lock."""
 
@@ -102,7 +111,11 @@ def _acquire_synthesis_lock(user_id: str) -> tuple[TextIO, Path]:
                     handle.write("0")
                     handle.flush()
                 handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                msvcrt.locking(  # pyright: ignore[reportAttributeAccessIssue]
+                    handle.fileno(),
+                    msvcrt.LK_NBLCK,  # pyright: ignore[reportAttributeAccessIssue]
+                    1,  # pyright: ignore[reportAttributeAccessIssue]
+                )
             except OSError as exc:
                 raise SynthesisLockUnavailable(str(lock_path)) from exc
         else:  # pragma: no cover - unsupported platform
@@ -127,7 +140,11 @@ def _release_synthesis_lock(handle: TextIO) -> None:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         elif msvcrt is not None:  # pragma: no cover - Windows fallback
             handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            msvcrt.locking(  # pyright: ignore[reportAttributeAccessIssue]
+                handle.fileno(),
+                msvcrt.LK_UNLCK,  # pyright: ignore[reportAttributeAccessIssue]
+                1,  # pyright: ignore[reportAttributeAccessIssue]
+            )
     finally:
         handle.close()
 
@@ -135,7 +152,11 @@ def _release_synthesis_lock(handle: TextIO) -> None:
 # ── Post-cycle validation ────────────────────────────────────────────
 
 
-def _validate_cycle_output() -> dict[str, object]:
+def _validate_cycle_output(
+    *,
+    memex_path: Path | None = None,
+    syke_db_path: Path | None = None,
+) -> dict[str, object]:
     """
     Validate what the agent produced during the cycle.
 
@@ -145,9 +166,11 @@ def _validate_cycle_output() -> dict[str, object]:
     """
     issues: list[str] = []
     stats: dict[str, object] = {}
+    artifact_path = memex_path or MEMEX_PATH
+    database_path = syke_db_path or SYKE_DB
 
-    if MEMEX_PATH.exists():
-        content = MEMEX_PATH.read_text(encoding="utf-8").strip()
+    if artifact_path.exists():
+        content = artifact_path.read_text(encoding="utf-8").strip()
         body = _strip_memex_header(content)
         stats["memex_artifact_exists"] = True
         stats["memex_artifact_size"] = len(content)
@@ -161,16 +184,20 @@ def _validate_cycle_output() -> dict[str, object]:
         stats["memex_artifact_exists"] = False
 
     # Check syke.db
-    stats["syke_db_path"] = str(SYKE_DB)
+    stats["syke_db_path"] = str(database_path)
     stats["sqlite_module_version"] = sqlite3.sqlite_version
     stats["syke_db_sidecars"] = {
         candidate.name: candidate.stat().st_size
-        for candidate in (SYKE_DB, Path(f"{SYKE_DB}-wal"), Path(f"{SYKE_DB}-shm"))
+        for candidate in (
+            database_path,
+            Path(f"{database_path}-wal"),
+            Path(f"{database_path}-shm"),
+        )
         if candidate.exists()
     }
-    if SYKE_DB.exists() and SYKE_DB.stat().st_size > 0:
+    if database_path.exists() and database_path.stat().st_size > 0:
         try:
-            conn = sqlite3.connect(f"file:{SYKE_DB}?mode=ro", uri=True, timeout=5)
+            conn = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True, timeout=5)
             try:
                 tables = conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'"
@@ -202,6 +229,11 @@ def _validate_cycle_output() -> dict[str, object]:
         "issues": issues,
         "stats": stats,
     }
+
+
+def _validation_stats(validation: dict[str, object]) -> dict[str, object]:
+    stats = validation.get("stats")
+    return stats if isinstance(stats, dict) else {}
 
 
 def _db_validation_issues(validation: dict[str, object]) -> list[str]:
@@ -243,25 +275,29 @@ def _memex_content(memex: dict[str, object] | None) -> str | None:
     return content if isinstance(content, str) and content.strip() else None
 
 
-def _read_memex_artifact() -> str | None:
-    if not MEMEX_PATH.exists():
+def _read_memex_artifact(path: Path | None = None) -> str | None:
+    artifact_path = path or MEMEX_PATH
+    if not artifact_path.exists():
         return None
-    content = MEMEX_PATH.read_text(encoding="utf-8").strip()
+    content = artifact_path.read_text(encoding="utf-8").strip()
     return content or None
 
 
 def _restore_memex_artifact(
     previous_artifact_content: str | None,
     previous_content: str | None,
+    *,
+    path: Path | None = None,
 ) -> None:
     """Undo a rejected projection so the next cycle does not import it."""
+    artifact_path = path or MEMEX_PATH
     if previous_artifact_content is not None:
-        _write_memex_artifact(previous_artifact_content)
+        _write_memex_artifact(previous_artifact_content, path=artifact_path)
         return
     if previous_content is not None:
-        _write_memex_artifact(previous_content)
+        _write_memex_artifact(previous_content, path=artifact_path)
         return
-    MEMEX_PATH.unlink(missing_ok=True)
+    artifact_path.unlink(missing_ok=True)
 
 
 def _strip_memex_header(content: str) -> str:
@@ -302,15 +338,16 @@ def _normalize_current_memex_projection_header(
     return _current_memex_row(db, user_id)
 
 
-def _write_memex_artifact(content: str) -> bool:
+def _write_memex_artifact(content: str, *, path: Path | None = None) -> bool:
+    artifact_path = path or MEMEX_PATH
     content_with_header = _inject_memex_header(content)
-    existing = _read_memex_artifact()
+    existing = _read_memex_artifact(artifact_path)
     if existing == content_with_header.strip():
         return False
     # Atomic write: temp file then rename (POSIX rename is atomic).
-    tmp = MEMEX_PATH.with_suffix(".tmp")
+    tmp = artifact_path.with_suffix(".tmp")
     tmp.write_text(content_with_header + "\n", encoding="utf-8")
-    tmp.rename(MEMEX_PATH)
+    tmp.rename(artifact_path)
     return True
 
 
@@ -334,6 +371,7 @@ def _sync_memex_to_db(
     previous_updated_at: str | None = None,
     previous_artifact_content: str | None = None,
     empty_first_run_content: str | None = None,
+    memex_path: Path | None = None,
 ) -> dict[str, object]:
     """Resolve canonical memex and project to MEMEX.md.
 
@@ -357,7 +395,7 @@ def _sync_memex_to_db(
     )
     current_content = _memex_content(current_memex)
     current_id = str(current_memex.get("id")) if current_memex and current_memex.get("id") else None
-    artifact_content = _read_memex_artifact()
+    artifact_content = _read_memex_artifact(memex_path)
     db_changed_during_cycle = current_content != previous_content
     artifact_changed_during_cycle = artifact_content != previous_artifact_content
 
@@ -437,8 +475,8 @@ def _sync_memex_to_db(
         return result
 
     try:
-        result["artifact_written"] = _write_memex_artifact(canonical_content)
-        if not _memex_bodies_match(_read_memex_artifact(), canonical_content):
+        result["artifact_written"] = _write_memex_artifact(canonical_content, path=memex_path)
+        if not _memex_bodies_match(_read_memex_artifact(memex_path), canonical_content):
             logger.error("Projected MEMEX.md does not match canonical memex content")
             result["source"] = "artifact_mismatch"
             return result
@@ -472,7 +510,7 @@ def _active_non_memex_memory_count(db: SykeDB, user_id: str) -> int:
         "AND (source_event_ids IS NULL OR source_event_ids != ?)",
         (user_id, '["__memex__"]'),
     ).fetchone()
-    return int(row[0] if row else 0)
+    return _safe_int(row[0] if row else 0)
 
 
 def _discovered_source_file_counts(
@@ -717,6 +755,25 @@ def pi_synthesize(
     Returns dict with cycle results and metrics.
     """
     _ws_root = workspace_root or WORKSPACE_ROOT
+    if selected_sources is None:
+        from syke.source_selection import get_selected_sources
+
+        selected_sources = get_selected_sources(user_id)
+
+    try:
+        uses_default_workspace = (
+            _ws_root.expanduser().resolve() == WORKSPACE_ROOT.expanduser().resolve()
+        )
+    except OSError:
+        uses_default_workspace = _ws_root == WORKSPACE_ROOT
+    memex_path = MEMEX_PATH if uses_default_workspace else _ws_root / "MEMEX.md"
+    configured_db_path = getattr(db, "db_path", None)
+    if isinstance(configured_db_path, str) and configured_db_path != ":memory:":
+        syke_db_path = Path(configured_db_path)
+    else:
+        syke_db_path = SYKE_DB if uses_default_workspace else _ws_root / "syke.db"
+    session_dir = SESSIONS_DIR if uses_default_workspace else _ws_root / "sessions"
+
     start_time = time.monotonic()
     result: dict[str, object] = {
         "backend": "pi",
@@ -743,14 +800,14 @@ def pi_synthesize(
         else None
     )
     is_first_run = first_run if first_run is not None else previous_memex_content is None
-    previous_memex_artifact_content = _read_memex_artifact()
+    previous_memex_artifact_content = _read_memex_artifact(memex_path)
     pre_non_memex_memory_count = _active_non_memex_memory_count(db, user_id)
     first_run_source_file_counts = (
         _discovered_source_file_counts(selected_sources, home=home) if is_first_run else {}
     )
 
     def _elapsed_ms() -> int:
-        return int((time.monotonic() - start_time) * 1000)
+        return _safe_int((time.monotonic() - start_time) * 1000)
 
     def _progress(message: str) -> None:
         if progress is not None:
@@ -863,7 +920,11 @@ def pi_synthesize(
             restore_info = restore_recovery_point(point)
         finally:
             _reopen_db_connection()
-        _restore_memex_artifact(previous_memex_artifact_content, previous_memex_content)
+        _restore_memex_artifact(
+            previous_memex_artifact_content,
+            previous_memex_content,
+            path=memex_path,
+        )
         return restore_info
 
     def _fail_after_restore(
@@ -922,9 +983,9 @@ def pi_synthesize(
                     status="failed",
                     memex_updated=False,
                     cost_usd=float(cost_usd or 0.0),
-                    input_tokens=int(input_tokens or 0),
-                    output_tokens=int(output_tokens or 0),
-                    cache_read_tokens=int(cache_read_tokens or 0),
+                    input_tokens=_safe_int(input_tokens),
+                    output_tokens=_safe_int(output_tokens),
+                    cache_read_tokens=_safe_int(cache_read_tokens),
                     duration_ms=duration_ms,
                     completed_at_override=completed_at_override,
                 )
@@ -974,6 +1035,13 @@ def pi_synthesize(
 
             return result
 
+        from syke.runtime.workspace import initialize_workspace
+
+        initialize_workspace(
+            workspace_root=_ws_root,
+            home=home,
+            selected_sources=selected_sources,
+        )
         _progress("workspace ready")
 
         try:
@@ -1013,7 +1081,7 @@ def pi_synthesize(
                     cursor_start=None,
                     skill_hash="pi_synthesis",
                     prompt_hash="setup_blocked",
-                    model=model_override or "pi",
+                    model=model_override if model_override is not None else "pi",
                     started_at_override=started_at.isoformat(),
                 )
                 db.complete_cycle_record(
@@ -1191,7 +1259,7 @@ def pi_synthesize(
                 runtime_reused = (
                     existing_runtime.is_alive
                     and existing_runtime.model == requested_model
-                    and existing_status.get("workspace") == str(WORKSPACE_ROOT)
+                    and existing_status.get("workspace") == str(_ws_root)
                 )
             except RuntimeError:
                 runtime_reused = False
@@ -1202,8 +1270,8 @@ def pi_synthesize(
                 _progress(f"starting Pi runtime · {requested_model}")
 
             runtime = start_pi_runtime(
-                workspace_dir=WORKSPACE_ROOT,
-                session_dir=SESSIONS_DIR,
+                workspace_dir=_ws_root,
+                session_dir=session_dir,
                 model=model_override,
                 selected_sources=selected_sources,
             )
@@ -1272,8 +1340,8 @@ def pi_synthesize(
         result["cost_usd"] = pi_result.cost_usd
         result["input_tokens"] = pi_result.input_tokens
         result["output_tokens"] = pi_result.output_tokens
-        result["cache_read_tokens"] = int(pi_result.cache_read_tokens or 0)
-        result["cache_write_tokens"] = int(pi_result.cache_write_tokens or 0)
+        result["cache_read_tokens"] = _safe_int(pi_result.cache_read_tokens)
+        result["cache_write_tokens"] = _safe_int(pi_result.cache_write_tokens)
         result["provider"] = pi_result.provider
         result["model"] = pi_result.response_model
         result["response_id"] = pi_result.response_id
@@ -1310,8 +1378,8 @@ def pi_synthesize(
                 cost_usd=pi_result.cost_usd,
                 input_tokens=pi_result.input_tokens,
                 output_tokens=pi_result.output_tokens,
-                cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                cache_write_tokens=int(pi_result.cache_write_tokens or 0),
+                cache_read_tokens=_safe_int(pi_result.cache_read_tokens),
+                cache_write_tokens=_safe_int(pi_result.cache_write_tokens),
                 provider=pi_result.provider,
                 model=pi_result.response_model,
                 response_id=pi_result.response_id,
@@ -1332,12 +1400,12 @@ def pi_synthesize(
                 thinking=getattr(pi_result, "thinking", []) or [],
                 transcript=transcript,
                 tool_calls=pi_result.tool_calls,
-                duration_ms=int(pi_result.duration_ms or 0),
+                duration_ms=_safe_int(pi_result.duration_ms),
                 cost_usd=pi_result.cost_usd,
                 input_tokens=pi_result.input_tokens,
                 output_tokens=pi_result.output_tokens,
-                cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                cache_write_tokens=int(pi_result.cache_write_tokens or 0),
+                cache_read_tokens=_safe_int(pi_result.cache_read_tokens),
+                cache_write_tokens=_safe_int(pi_result.cache_write_tokens),
                 provider=pi_result.provider,
                 model=pi_result.response_model,
                 response_id=pi_result.response_id,
@@ -1349,7 +1417,10 @@ def pi_synthesize(
             )
 
         # ── 7. Validate output ──
-        validation = _validate_cycle_output()
+        validation = _validate_cycle_output(
+            memex_path=memex_path,
+            syke_db_path=syke_db_path,
+        )
         result["validation"] = validation
 
         if not validation["valid"]:
@@ -1365,9 +1436,10 @@ def pi_synthesize(
         # If over budget, give the agent up to 3 retries in the same session.
         # The agent has full context from the synthesis it just did.
         memex_retries = 0
-        while validation.get("stats", {}).get("memex_over_budget") and memex_retries < 3:
+        validation_stats = _validation_stats(validation)
+        while validation_stats.get("memex_over_budget") and memex_retries < 3:
             memex_retries += 1
-            token_count = validation["stats"].get("memex_tokens", 0)
+            token_count = validation_stats.get("memex_tokens", 0)
             logger.info(
                 "MEMEX over budget (%d/%d tokens) — retry %d/3",
                 token_count,
@@ -1386,8 +1458,12 @@ def pi_synthesize(
             except Exception as e:
                 logger.warning("MEMEX compaction retry %d failed: %s", memex_retries, e)
                 break
-            validation = _validate_cycle_output()
+            validation = _validate_cycle_output(
+                memex_path=memex_path,
+                syke_db_path=syke_db_path,
+            )
             result["validation"] = validation
+            validation_stats = _validation_stats(validation)
             if not validation["valid"]:
                 logger.warning(f"Cycle output validation issues: {validation['issues']}")
                 failed_validation = _fail_cycle_for_db_validation(
@@ -1397,8 +1473,8 @@ def pi_synthesize(
                 if failed_validation is not None:
                     return failed_validation
 
-        if validation.get("stats", {}).get("memex_over_budget"):
-            token_count = validation["stats"].get("memex_tokens", 0)
+        if validation_stats.get("memex_over_budget"):
+            token_count = validation_stats.get("memex_tokens", 0)
             logger.error(
                 "MEMEX still over budget after %d retries (%d/%d tokens) — cycle failed",
                 memex_retries,
@@ -1407,9 +1483,9 @@ def pi_synthesize(
             )
             # Revert MEMEX to previous canonical content
             if previous_memex_artifact_content is not None:
-                _write_memex_artifact(previous_memex_artifact_content)
+                _write_memex_artifact(previous_memex_artifact_content, path=memex_path)
             elif previous_memex_content is not None:
-                _write_memex_artifact(previous_memex_content)
+                _write_memex_artifact(previous_memex_content, path=memex_path)
 
             error = (
                 f"MEMEX over budget after {memex_retries} retries "
@@ -1427,8 +1503,8 @@ def pi_synthesize(
                 cost_usd=pi_result.cost_usd,
                 input_tokens=pi_result.input_tokens,
                 output_tokens=pi_result.output_tokens,
-                cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                cache_write_tokens=int(pi_result.cache_write_tokens or 0),
+                cache_read_tokens=_safe_int(pi_result.cache_read_tokens),
+                cache_write_tokens=_safe_int(pi_result.cache_write_tokens),
                 provider=pi_result.provider,
                 model=pi_result.response_model,
                 response_id=pi_result.response_id,
@@ -1470,6 +1546,7 @@ def pi_synthesize(
                     previous_updated_at=previous_memex_updated_at,
                     previous_artifact_content=previous_memex_artifact_content,
                     empty_first_run_content=empty_first_run_content,
+                    memex_path=memex_path,
                 )
                 memex_synced = bool(memex_sync.get("ok", False))
                 memex_updated = bool(memex_sync.get("updated", False))
@@ -1504,6 +1581,7 @@ def pi_synthesize(
                         _restore_memex_artifact(
                             previous_memex_artifact_content,
                             previous_memex_content,
+                            path=memex_path,
                         )
                         sources = ", ".join(
                             f"{source}={count}"
@@ -1546,8 +1624,8 @@ def pi_synthesize(
                         cost_usd=pi_result.cost_usd,
                         input_tokens=pi_result.input_tokens,
                         output_tokens=pi_result.output_tokens,
-                        cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                        cache_write_tokens=int(pi_result.cache_write_tokens or 0),
+                        cache_read_tokens=_safe_int(pi_result.cache_read_tokens),
+                        cache_write_tokens=_safe_int(pi_result.cache_write_tokens),
                         provider=pi_result.provider,
                         model=pi_result.response_model,
                         response_id=pi_result.response_id,
@@ -1566,14 +1644,17 @@ def pi_synthesize(
                     cursor_end=cycle_id,
                     memex_updated=memex_updated,
                     cost_usd=float(pi_result.cost_usd or 0.0),
-                    input_tokens=int(pi_result.input_tokens or 0),
-                    output_tokens=int(pi_result.output_tokens or 0),
-                    cache_read_tokens=int(pi_result.cache_read_tokens or 0),
+                    input_tokens=_safe_int(pi_result.input_tokens),
+                    output_tokens=_safe_int(pi_result.output_tokens),
+                    cache_read_tokens=_safe_int(pi_result.cache_read_tokens),
                     duration_ms=total_duration,
                     completed_at_override=cycle_completed_at,
                 )
             if refresh_validation_after_commit:
-                validation = _validate_cycle_output()
+                validation = _validate_cycle_output(
+                    memex_path=memex_path,
+                    syke_db_path=syke_db_path,
+                )
                 result["validation"] = validation
             logger.info(f"Post-synthesis commit for cycle {cycle_id}")
         except _SynthesisCommitFailed as e:
@@ -1584,15 +1665,17 @@ def pi_synthesize(
                 recovery_point=recovery_point,
                 cycle_id=cycle_id,
                 output_text=pi_result.output,
-                thinking=getattr(pi_result, "thinking", []) or [],
+                thinking=(
+                    getattr(pi_result, "thinking", []) if getattr(pi_result, "thinking", []) else []
+                ),
                 transcript=transcript,
                 tool_calls=pi_result.tool_calls,
                 duration_ms=total_duration,
                 cost_usd=pi_result.cost_usd,
                 input_tokens=pi_result.input_tokens,
                 output_tokens=pi_result.output_tokens,
-                cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                cache_write_tokens=int(pi_result.cache_write_tokens or 0),
+                cache_read_tokens=_safe_int(pi_result.cache_read_tokens),
+                cache_write_tokens=_safe_int(pi_result.cache_write_tokens),
                 provider=pi_result.provider,
                 model=pi_result.response_model,
                 response_id=pi_result.response_id,
@@ -1613,15 +1696,17 @@ def pi_synthesize(
                 recovery_point=recovery_point,
                 cycle_id=cycle_id,
                 output_text=pi_result.output,
-                thinking=getattr(pi_result, "thinking", []) or [],
+                thinking=(
+                    getattr(pi_result, "thinking", []) if getattr(pi_result, "thinking", []) else []
+                ),
                 transcript=transcript,
                 tool_calls=pi_result.tool_calls,
                 duration_ms=total_duration,
                 cost_usd=pi_result.cost_usd,
                 input_tokens=pi_result.input_tokens,
                 output_tokens=pi_result.output_tokens,
-                cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-                cache_write_tokens=int(pi_result.cache_write_tokens or 0),
+                cache_read_tokens=_safe_int(pi_result.cache_read_tokens),
+                cache_write_tokens=_safe_int(pi_result.cache_write_tokens),
                 provider=pi_result.provider,
                 model=pi_result.response_model,
                 response_id=pi_result.response_id,
@@ -1649,8 +1734,8 @@ def pi_synthesize(
             cost_usd=pi_result.cost_usd,
             input_tokens=pi_result.input_tokens,
             output_tokens=pi_result.output_tokens,
-            cache_read_tokens=int(pi_result.cache_read_tokens or 0),
-            cache_write_tokens=int(pi_result.cache_write_tokens or 0),
+            cache_read_tokens=_safe_int(pi_result.cache_read_tokens),
+            cache_write_tokens=_safe_int(pi_result.cache_write_tokens),
             num_turns=num_turns,
             provider=pi_result.provider,
             model=pi_result.response_model,

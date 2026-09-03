@@ -4,6 +4,31 @@ All notable changes to Syke are documented here.
 
 ## [Unreleased]
 
+- Added OpenCode 2.0 adapter support for the coexisting legacy and v2 SQLite
+  schemas. `session_v2`/`session_message` metadata is authoritative for duplicate
+  IDs, while recency is calculated across both schemas.
+- Corrected the OpenCode read contract for pure or mixed databases: detect tables
+  before querying, read legacy and v2 message streams separately, and keyed-merge
+  by stable message ID (v2 wins divergent duplicates; legacy-only rows use their
+  parts). Session metadata may use v2-precedence plus union recency, but that is
+  not message-level deduplication.
+- Documented v2 tool statuses as `completed`/`error` (with unknown future values
+  tolerated) and v2 tool output in `state.content`; legacy tool output remains
+  `state.output`.
+- Hardened OpenCode discovery and read guidance for live WAL databases: only
+  `opencode*.db` is discovered, `-wal`/`-shm` sidecars are excluded, and reads
+  are read-only, parameterized, bounded, paginated, truncated, and
+  privacy-limited. The adapter remains LLM-first; no Python ingest parser was
+  added.
+- Adapter bootstrap now upgrades untouched known seed revisions without
+  overwriting user-customized adapter files; customized files receive a manual
+  repair hint.
+- Upgraded the managed Pi runtime to `@earendil-works/pi-coding-agent@0.84.1`,
+  exposing the GPT-5.6 model series and `max` thinking level.
+- Added external Pi session history ingestion from
+  `~/.pi/agent/sessions/**/*.jsonl` with an adapter and sandbox allowlist;
+  Syke-owned runtime sessions remain excluded.
+
 ## [0.5.10] - 2026-06-06
 
 Patch - daemon-owned concurrent asks and release proof.

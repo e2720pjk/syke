@@ -1,3 +1,5 @@
+# pyright: reportMissingImports=false
+
 """Setup flow support helpers for the Syke CLI."""
 
 from __future__ import annotations
@@ -5,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-import click
+import click  # pyright: ignore[reportMissingImports]
 
 from syke.cli_support.context import observe_registry
 from syke.cli_support.daemon_state import daemon_payload
@@ -72,8 +74,20 @@ def trust_payload(user_id: str) -> dict[str, list[dict[str, str]]]:
     return {"sources": sources, "targets": targets}
 
 
+def _latest_mtime_sort_value(item: dict[str, object]) -> float:
+    value = item.get("latest_mtime")
+    if not isinstance(value, (int, float)):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
 def setup_source_inventory(user_id: str) -> list[dict[str, object]]:
     from datetime import UTC, datetime
+
+    from syke.observe.catalog import iter_discovered_files
 
     sources: list[dict[str, object]] = []
     registry = observe_registry(user_id)
@@ -85,25 +99,21 @@ def setup_source_inventory(user_id: str) -> list[dict[str, object]]:
         latest_mtime: float | None = None
         if desc.discover is not None:
             for root in desc.discover.roots:
-                base = Path(root.path).expanduser()
-                roots.append(str(base))
-                if not base.exists():
-                    continue
-                patterns = root.include or ["**/*"]
-                for pattern in patterns:
-                    try:
-                        for match in base.glob(pattern):
-                            files_found += 1
-                            try:
-                                mtime = match.stat().st_mtime
-                            except OSError:
-                                mtime = None
-                            if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
-                                latest_mtime = mtime
-                            if len(detected_paths) < 3:
-                                detected_paths.append(str(match))
-                    except OSError:
-                        continue
+                roots.append(str(Path(root.path).expanduser()))
+            try:
+                discovered_files = iter_discovered_files(desc)
+            except OSError:
+                discovered_files = []
+            for match in discovered_files:
+                files_found += 1
+                try:
+                    mtime = match.stat().st_mtime
+                except OSError:
+                    mtime = None
+                if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
+                    latest_mtime = mtime
+                if len(detected_paths) < 3:
+                    detected_paths.append(str(match))
 
         sources.append(
             {
@@ -123,7 +133,7 @@ def setup_source_inventory(user_id: str) -> list[dict[str, object]]:
     sources.sort(
         key=lambda item: (
             not bool(item["detected"]),
-            -(item["latest_mtime"] or 0.0),
+            -_latest_mtime_sort_value(item),
             cast(str, item["source"]),
         )
     )
@@ -283,6 +293,8 @@ def _build_next_steps(provider: dict[str, object], daemon: dict[str, object]) ->
 
 def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> dict[str, object]:
     from syke.daemon.ipc import daemon_runtime_status
+    from syke.observe.bootstrap import customized_adapter_hints
+    from syke.runtime.workspace import WORKSPACE_ROOT
     from syke.source_selection import get_selected_sources
 
     provider = provider_payload(cli_provider)
@@ -297,6 +309,10 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
         user_id=user_id,
         daemon=daemon,
     )
+    adapter_repairs = [
+        {"source": result.source, "detail": result.detail}
+        for result in customized_adapter_hints(WORKSPACE_ROOT)
+    ]
 
     detected_sources = [item["source"] for item in sources if item["detected"]]
     proposed_actions: list[dict[str, object]] = [
@@ -373,6 +389,7 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
         "selected_sources": list(selected_sources) if selected_sources is not None else None,
         "trust": trust,
         "setup_targets": setup_targets,
+        "adapter_repairs": adapter_repairs,
         "runtime": runtime,
         "daemon": daemon,
         "daemon_runtime": warm_runtime,
@@ -437,6 +454,13 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
             console.print(f"    [dim]{remediation}[/dim]")
         else:
             console.print("  [yellow]✗[/yellow] background service: blocked")
+
+    adapter_repairs = cast(list[dict[str, object]], info.get("adapter_repairs") or [])
+    if adapter_repairs:
+        console.print()
+        console.print("  [yellow]! adapter guides need manual repair:[/yellow]")
+        for repair in adapter_repairs:
+            console.print(f"    {repair['source']}: {repair['detail']}")
 
     # What setup will do — one paragraph
     console.print()

@@ -12,7 +12,7 @@ from typing import Any, get_type_hints
 log = logging.getLogger(__name__)
 
 CONFIG_PATH = Path.home() / ".syke" / "config.toml"
-THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh")
+THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +208,7 @@ timezone = "auto"
 # ── Synthesis agent ─────────────────────────────────────────────────────────
 [synthesis]
 threshold = 5            # min new events before synthesizing
-thinking_level = "medium"  # off|minimal|low|medium|high|xhigh
+thinking_level = "medium"  # off|minimal|low|medium|high|xhigh|max
 timeout = 600            # wall-clock timeout (seconds)
 first_run_timeout = 1500 # wall-clock timeout for the first synthesis
 
