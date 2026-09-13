@@ -29,21 +29,37 @@ def render_setup_source_result(source: str, status: str, detail: str | None = No
     render_setup_line(source, status, detail=detail)
 
 
-def trust_payload(user_id: str) -> dict[str, list[dict[str, str]]]:
+def trust_payload(
+    user_id: str,
+    *,
+    selected_sources: tuple[str, ...] | list[str] | None = None,
+) -> dict[str, list[dict[str, str]]]:
     import platform
 
     from syke.config import CODEX_GLOBAL_AGENTS, SKILLS_DIRS, user_data_dir
     from syke.daemon.daemon import LOG_PATH, PLIST_PATH, SYSTEMD_UNIT_PATH
+    from syke.observe.catalog import is_source_selected
     from syke.pi_state import (
         get_pi_agent_dir,
         get_pi_auth_path,
         get_pi_models_path,
         get_pi_settings_path,
     )
+    from syke.runtime.workspace import WORKSPACE_ROOT
 
     sources: list[dict[str, str]] = []
     registry = observe_registry(user_id)
     for desc in registry.active_harnesses():
+        if not is_source_selected(desc, selected_sources):
+            continue
+        if desc.source == "chatgpt-web":
+            sources.append(
+                {
+                    "source": desc.source,
+                    "path": str(WORKSPACE_ROOT / "sources" / "chatgpt-web" / "projection.jsonl"),
+                }
+            )
+            continue
         if desc.discover is None:
             continue
         for root in desc.discover.roots:
@@ -97,6 +113,49 @@ def setup_source_inventory(user_id: str) -> list[dict[str, object]]:
         detected_paths: list[str] = []
         roots: list[str] = []
         latest_mtime: float | None = None
+        if desc.source == "chatgpt-web":
+            from syke.config import chatgpt_web_excluded_project_ids
+            from syke.observe.chatgpt_web import inspect_chatgpt_web_archive
+
+            root = (
+                Path(desc.discover.roots[0].path) if desc.discover and desc.discover.roots else None
+            )
+            diagnostics = (
+                inspect_chatgpt_web_archive(root, chatgpt_web_excluded_project_ids())
+                if root is not None
+                else {"archive_validated": False, "error": {"reason": "root_missing"}}
+            )
+            roots = [str(root)] if root is not None else []
+            valid = bool(diagnostics.get("archive_validated"))
+            files_found = int(diagnostics.get("conversations_discovered", 0)) if valid else 0
+            if root is not None:
+                detected_paths = [
+                    str(root / name) for name in ("archive.json", "indexes/conversations.jsonl")
+                ]
+                for path in (root / "archive.json", root / "indexes" / "conversations.jsonl"):
+                    try:
+                        mtime = path.stat().st_mtime
+                    except OSError:
+                        continue
+                    latest_mtime = max(latest_mtime or mtime, mtime)
+            sources.append(
+                {
+                    "source": desc.source,
+                    "format_cluster": desc.format_cluster,
+                    "explicit_only": bool(getattr(desc, "explicit_only", False)),
+                    "roots": roots,
+                    "files_found": files_found,
+                    "detected": valid,
+                    "selectable": valid,
+                    "sample_paths": detected_paths,
+                    "latest_mtime": latest_mtime,
+                    "latest_seen": datetime.fromtimestamp(latest_mtime, UTC).isoformat()
+                    if latest_mtime is not None
+                    else None,
+                    "archive": diagnostics,
+                }
+            )
+            continue
         if desc.discover is not None:
             for root in desc.discover.roots:
                 roots.append(str(Path(root.path).expanduser()))
@@ -119,6 +178,7 @@ def setup_source_inventory(user_id: str) -> list[dict[str, object]]:
             {
                 "source": desc.source,
                 "format_cluster": desc.format_cluster,
+                "explicit_only": bool(getattr(desc, "explicit_only", False)),
                 "roots": roots,
                 "files_found": files_found,
                 "detected": files_found > 0,
@@ -301,7 +361,7 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
     providers = setup_provider_choices()
     sources = setup_source_inventory(user_id)
     selected_sources = get_selected_sources(user_id)
-    trust = trust_payload(user_id)
+    trust = trust_payload(user_id, selected_sources=selected_sources)
     runtime = setup_runtime_payload()
     daemon = setup_daemon_viability_payload()
     warm_runtime = daemon_runtime_status(user_id)
@@ -311,10 +371,23 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
     )
     adapter_repairs = [
         {"source": result.source, "detail": result.detail}
-        for result in customized_adapter_hints(WORKSPACE_ROOT)
+        for result in customized_adapter_hints(
+            WORKSPACE_ROOT,
+            selected_sources=selected_sources,
+        )
     ]
 
     detected_sources = [item["source"] for item in sources if item["detected"]]
+    previously_selected = set(selected_sources or ())
+    default_sources = [
+        item["source"]
+        for item in sources
+        if item["detected"]
+        and (not item.get("explicit_only", False) or item["source"] in previously_selected)
+    ]
+    explicit_only_sources = [
+        item["source"] for item in sources if item["detected"] and item.get("explicit_only", False)
+    ]
     proposed_actions: list[dict[str, object]] = [
         {
             "id": "bootstrap_source_readers",
@@ -328,7 +401,9 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
             {
                 "id": "connect_sources",
                 "description": "Connect selected detected sources for synthesis and ask context.",
-                "sources": detected_sources,
+                "sources": default_sources,
+                "available_sources": detected_sources,
+                "explicit_only_sources": explicit_only_sources,
             }
         )
 
@@ -357,7 +432,8 @@ def build_setup_inspect_payload(*, user_id: str, cli_provider: str | None) -> di
                 "id": "sources",
                 "question": "Choose which detected sources to connect during setup.",
                 "options": detected_sources,
-                "default": detected_sources,
+                "default": default_sources,
+                "explicit_only": explicit_only_sources,
             }
         )
     if daemon.get("installable") and not daemon.get("running"):
@@ -423,6 +499,15 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
         for item in cast(list[dict[str, object]], info["sources"])
         if item.get("detected")
     ]
+    previously_selected = info.get("selected_sources")
+    previously_selected = (
+        previously_selected if isinstance(previously_selected, (list, tuple)) else ()
+    )
+    planned_sources = [
+        item
+        for item in detected_sources
+        if not item.get("explicit_only", False) or cast(str, item["source"]) in previously_selected
+    ]
     if detected_sources:
         console.print()
         console.print("  [bold]Sources[/bold]")
@@ -433,11 +518,13 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
             unit = "db" if fmt == "sqlite" else "files"
             latest = cast(str | None, item.get("latest_seen"))
             latest_short = latest[:10] if latest else "?"
+            opt_in = " [explicit opt-in]" if item.get("explicit_only") else ""
             console.print(
-                f"    {name:<16} {files:>6,} {unit:<5}  [dim]last used:[/dim] {latest_short}"
+                f"    {name:<16} {files:>6,} {unit:<5}  [dim]last used:[/dim] "
+                f"{latest_short}{opt_in}"
             )
-        total_files = sum(cast(int, s["files_found"]) for s in detected_sources)
-        console.print(f"    [dim]{'total':<16} {total_files:>6,} files[/dim]")
+        total_files = sum(cast(int, s["files_found"]) for s in planned_sources)
+        console.print(f"    [dim]{'planned total':<16} {total_files:>6,} files[/dim]")
     else:
         console.print("  [dim]· sources: none detected[/dim]")
 
@@ -467,8 +554,18 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
     console.print("  [bold]Setup will:[/bold]")
     if not provider.get("configured"):
         console.print("    · configure a provider")
-    if detected_sources:
-        console.print(f"    · ingest {len(detected_sources)} source(s) in background")
+    if planned_sources:
+        console.print(f"    · ingest {len(planned_sources)} source(s) in background")
+    explicit_only_sources = [
+        item["source"]
+        for item in detected_sources
+        if item.get("explicit_only", False) and cast(str, item["source"]) not in previously_selected
+    ]
+    if explicit_only_sources:
+        console.print(
+            "    · leave explicit-only source(s) disabled unless explicitly selected: "
+            + ", ".join(cast(str, source) for source in explicit_only_sources)
+        )
     console.print("    · synthesize your first memex")
     console.print("    · register capabilities to your agent harnesses")
     if daemon.get("installable") and not daemon.get("running"):
@@ -483,7 +580,11 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
     console.print(f"\n  {len(setup_targets)} files will be created under ~/.syke")
 
 
-def choose_setup_sources_interactive(sources: list[dict[str, object]]) -> list[str]:
+def choose_setup_sources_interactive(
+    sources: list[dict[str, object]],
+    *,
+    previously_selected: tuple[str, ...] | list[str] = (),
+) -> list[str]:
     from syke.cli_support.auth_flow import term_menu_select_many
 
     detected = [item for item in sources if item.get("detected")]
@@ -503,7 +604,12 @@ def choose_setup_sources_interactive(sources: list[dict[str, object]]) -> list[s
     selected = term_menu_select_many(
         entries,
         title="\n  Select sources to connect (newest first):\n",
-        default_indices=list(range(len(entries))),
+        default_indices=[
+            index
+            for index, item in enumerate(detected)
+            if not item.get("explicit_only", False)
+            or cast(str, item["source"]) in previously_selected
+        ],
     )
     if selected is None:
         raise click.Abort()

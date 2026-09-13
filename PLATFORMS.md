@@ -13,6 +13,7 @@
 | Antigravity | workflow artifacts under `~/.gemini/antigravity/brain` and browser recording metadata | Active |
 | Hermes | `~/.hermes/state.db` plus session JSON under `~/.hermes/sessions` | Active |
 | Gemini CLI | `~/.gemini/tmp/<project_hash>/chats/**/*.json` and checkpoint JSON | Active |
+| ChatGPT Web | Explicitly configured ChatGPTExporter snapshot (`archive.json`, conversation index, normalized bodies) | Active, explicit opt-in |
 | GitHub | historical/docs reference | Experimental |
 
 ## Distribution (Syke into agents)
@@ -38,5 +39,6 @@ For current active harnesses, setup is seed-first — there is no runtime factor
 - `initialize_workspace()` installs shipped seeds locally on first run and upgrades only known untouched seed revisions
 - new harnesses arrive by adding a seed adapter markdown plus a `SourceSpec` to the catalog — no generated Python adapters, no dynamic loader
 - OpenCode's adapter seed revision is legacy+v2 aware (schema detection, v2-authoritative session metadata, stable message-ID merge, bounded legacy-part reconstruction); untouched older seeds upgrade automatically, while customized adapters are preserved and reported with manual repair guidance
+- ChatGPT Web is projection-first: Syke validates the configured snapshot, filters denied project memberships before body reads, and exposes only a bounded current-branch projection; the exporter root is never a Pi sandbox read path
 
 Updated by agents as they self-heal and add new platforms.

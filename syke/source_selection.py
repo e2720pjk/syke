@@ -56,7 +56,8 @@ def get_selected_sources(user_id: str) -> tuple[str, ...] | None:
     """Return persisted selected sources.
 
     Returns:
-    - None when no persisted selection exists (treat as unrestricted/all)
+    - None when no persisted selection exists (all normal sources; explicit-only
+      sources remain disabled)
     - tuple (possibly empty) when a selection has been explicitly saved
     """
     path = _selection_path(user_id)
@@ -66,6 +67,8 @@ def get_selected_sources(user_id: str) -> tuple[str, ...] | None:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return _fail_closed_selection(path, f"unreadable payload ({exc.__class__.__name__})")
+    if not isinstance(payload, dict):
+        return _fail_closed_selection(path, "payload is not an object")
     raw = payload.get("selected_sources")
     if not isinstance(raw, list):
         return _fail_closed_selection(path, "selected_sources is not a list")

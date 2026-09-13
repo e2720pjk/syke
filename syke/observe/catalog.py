@@ -24,6 +24,7 @@ class SourceSpec:
     discover: DiscoverConfig
     artifact_hints: tuple[str, ...] = ()
     status: str = "active"
+    explicit_only: bool = False
 
 
 _CATALOG: tuple[SourceSpec, ...] = (
@@ -208,15 +209,52 @@ _CATALOG: tuple[SourceSpec, ...] = (
 )
 
 
+def _chatgpt_web_spec() -> SourceSpec | None:
+    """Build the ChatGPT Web source only from an explicit configured root."""
+    try:
+        from syke.config import chatgpt_web_source_root
+
+        root = chatgpt_web_source_root()
+    except Exception:
+        root = None
+    if root is None:
+        return None
+    return SourceSpec(
+        source="chatgpt-web",
+        format_cluster="json",
+        discover=DiscoverConfig(
+            roots=[
+                DiscoverRoot(
+                    path=str(root),
+                    include=["archive.json", "indexes/conversations.jsonl"],
+                    priority=30,
+                )
+            ]
+        ),
+        artifact_hints=("archive.json", "conversations.jsonl", "normalized", "projectId"),
+        explicit_only=True,
+    )
+
+
 def active_sources() -> tuple[SourceSpec, ...]:
-    return _CATALOG
+    chatgpt_web = _chatgpt_web_spec()
+    if chatgpt_web is None:
+        return _CATALOG
+    return (chatgpt_web, *_CATALOG)
 
 
 def get_source(source: str) -> SourceSpec | None:
-    for spec in _CATALOG:
-        if spec.source == source:
-            return spec
-    return None
+    return next((spec for spec in active_sources() if spec.source == source), None)
+
+
+def is_source_selected(
+    spec: SourceSpec,
+    selected_sources: tuple[str, ...] | list[str] | None,
+) -> bool:
+    """Apply persisted source selection, including explicit-only sources."""
+    if getattr(spec, "explicit_only", False):
+        return selected_sources is not None and spec.source in selected_sources
+    return selected_sources is None or spec.source in (selected_sources or ())
 
 
 def _resolve_root_path(raw_path: str, *, home: Path | None = None) -> Path:

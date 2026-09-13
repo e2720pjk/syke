@@ -120,6 +120,20 @@ syke config path
 |---|---|---|---|
 | `claude_code` | `string` | `"~/.claude"` | Claude Code source root |
 | `codex` | `string` | `"~/.codex"` | Codex source root |
+| `chatgpt_web` | table | empty | ChatGPTExporter archive source; dynamic and explicit-only |
+
+#### `[paths.sources.chatgpt_web]`
+
+| Key | Type | Default | Meaning | Env override |
+|---|---|---|---|---|
+| `root` | `string` | `""` | One ChatGPTExporter archive root containing `archive.json` and the normalized conversation index | `SYKE_CHATGPT_WEB_ROOT` |
+| `excluded_project_ids` | `array[string]` | `[]` | Exact project IDs denied with deny-wins membership semantics before conversation bodies are read | `SYKE_CHATGPT_WEB_EXCLUDED_PROJECT_IDS` |
+
+The source is not registered or selected when `root` is empty. Selecting
+`chatgpt-web` causes Syke to validate the archive and write a bounded,
+allowlisted current-branch projection under `~/.syke/sources/chatgpt-web/`.
+Pi never receives the exporter root, raw archive records, assets, project
+instructions, or account/session data.
 
 ### `[paths.distribution]`
 
@@ -139,6 +153,11 @@ data_dir = "~/.syke/data"  # legacy, not used for path resolution
 [paths.sources]
 claude_code = "~/.claude"
 codex = "~/.codex"
+
+# Optional and explicit-only; leave empty to disable the source.
+[paths.sources.chatgpt_web]
+root = ""
+excluded_project_ids = []
 
 [paths.distribution]
 claude_md = "~/.claude/CLAUDE.md"

@@ -256,6 +256,7 @@ def sync(
                         "cost_usd": result.get("cost_usd"),
                         "reason": result.get("reason"),
                         "error": result.get("error"),
+                        "source_run": result.get("source_run"),
                         "selected_sources": list(effective_sources),
                         "next_steps": [
                             'syke ask "what am I working on?"',

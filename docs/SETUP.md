@@ -30,7 +30,7 @@ shows planned actions, then applies on confirmation.
 The user experience should be:
 
 1. See what Syke found: provider, runtime, harnesses, and planned writes.
-2. Choose or confirm sources.
+2. Choose or confirm sources; explicit-only sources are disabled unless selected.
 3. Confirm provider/auth.
 4. Let setup start the background service/bootstrap unless intentionally skipped.
 5. Open the timeline and keep working while first synthesis runs.
@@ -42,6 +42,8 @@ A healthy first run should end with:
 - `~/.syke/syke.db` initialized
 - `~/.syke/MEMEX.md` available
 - adapter markdowns installed under `~/.syke/adapters/`
+- if ChatGPT Web is selected, its archive has been validated and a bounded
+  projection plus run diagnostics exist under `~/.syke/sources/chatgpt-web/`
 - OpenCode adapter revision is an LLM-first, schema-detected guide for legacy
   and v2 tables, uses v2 for duplicate session metadata, keyed-merges messages
   by stable ID (v2 wins), reconstructs legacy-only parts, and excludes live
@@ -223,7 +225,13 @@ Source selection is persisted and reused across setup/sync/daemon flows.
 - Automation can pass repeated `--source` values to `syke setup`.
 - `syke sync` accepts repeated `--source` values for the same persisted selection flow.
 - Selections are stored at `~/.syke/source_selection.json`.
-- If no selection exists yet, runtime behavior is unrestricted (`None` selection).
+- If no selection exists yet, normal sources remain unrestricted (`None` selection),
+  but explicit-only sources remain disabled.
+- ChatGPT Web is available only when `[paths.sources.chatgpt_web].root` (or
+  `SYKE_CHATGPT_WEB_ROOT`) points to an archive, and it still requires explicit
+  selection (for example, `--source chatgpt-web`).
+- `excluded_project_ids` may be empty; when configured, any matching project
+  membership denies the conversation before its body is opened.
 - If the persisted file is corrupt or names an unknown source, Syke fails closed
   to an empty selection instead of broadening access.
 
@@ -235,6 +243,17 @@ Notes:
   untouched seed hash. If an adapter is customized, setup preserves it and
   reports the path plus a manual repair step (review the shipped seed, or
   delete the file and rerun `syke connect`); it never overwrites user edits.
+
+### ChatGPT Web read boundary
+
+ChatGPT Web uses a configured ChatGPTExporter snapshot, not a live web login.
+Syke validates `archive.json`, the conversation index, optional inventory and
+validation metadata, hashes, counts, and each normalized body identity. It
+merges duplicate index memberships with deny-wins project filtering, then
+projects only the current graph branch and bounded user/assistant text or code.
+Assets and citations become omission markers. The raw exporter root is never
+added to Pi's sandbox read paths; deselection removes the workspace projection,
+and a failed refresh retains the previous accepted projection.
 
 ### OpenCode 2.0 read boundary
 

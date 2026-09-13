@@ -77,6 +77,24 @@ claude_code = "/opt/claude"
         assert cfg.paths.data_dir == "/custom/data"
         assert cfg.paths.sources.claude_code == "/opt/claude"
 
+    def test_loads_chatgpt_web_archive_source(self, tmp_path: Path) -> None:
+        p = tmp_path / "config.toml"
+        p.write_text(
+            """\
+[paths.sources.chatgpt_web]
+root = "~/Downloads/chatgpt-export"
+excluded_project_ids = ["project-a", "project-b"]
+"""
+        )
+
+        cfg = load_config(p)
+
+        assert cfg.paths.sources.chatgpt_web.root == "~/Downloads/chatgpt-export"
+        assert cfg.paths.sources.chatgpt_web.excluded_project_ids == (
+            "project-a",
+            "project-b",
+        )
+
     def test_ignores_removed_sections_and_keys(self, tmp_path: Path, caplog) -> None:
         p = tmp_path / "config.toml"
         p.write_text(

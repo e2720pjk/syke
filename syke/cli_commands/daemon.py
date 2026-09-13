@@ -256,7 +256,9 @@ def daemon_status_cmd(ctx: click.Context, use_json: bool) -> None:
             console.print("  Last run: [dim]unavailable[/dim]")
     console.print(f"  Log:      {LOG_PATH}  [dim](syke daemon logs to view)[/dim]")
     if selected_sources is None:
-        console.print("  Sources:  [dim]all detected sources[/dim]")
+        console.print(
+            "  Sources:  [dim]all normal detected sources (explicit-only sources disabled)[/dim]"
+        )
     elif selected_sources:
         console.print(f"  Sources:  {', '.join(selected_sources)}")
     else:

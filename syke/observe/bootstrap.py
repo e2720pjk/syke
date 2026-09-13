@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from syke.observe.catalog import active_sources
+from syke.observe.catalog import active_sources, is_source_selected
 from syke.observe.seeds import get_seed_adapter_md_path
 
 logger = logging.getLogger(__name__)
@@ -53,10 +53,9 @@ def customized_adapter_hints(
     while ``ensure_adapters`` remains responsible for installation/upgrades.
     """
     adapters_dir = workspace_root / "adapters"
-    selected_set = set(selected_sources) if selected_sources is not None else None
     results: list[BootstrapResult] = []
     for spec in active_sources():
-        if selected_set is not None and spec.source not in selected_set:
+        if not is_source_selected(spec, selected_sources):
             continue
         md_src = get_seed_adapter_md_path(spec.source)
         if md_src is None:
@@ -90,10 +89,9 @@ def ensure_adapters(
     adapters_dir.mkdir(parents=True, exist_ok=True)
 
     results: list[BootstrapResult] = []
-    selected_set = set(selected_sources) if selected_sources is not None else None
 
     for spec in active_sources():
-        if selected_set is not None and spec.source not in selected_set:
+        if not is_source_selected(spec, selected_sources):
             continue
         md_src = get_seed_adapter_md_path(spec.source)
         if md_src is None:

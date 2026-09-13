@@ -60,6 +60,39 @@ def _env_str(var: str, cfg_val: str | None) -> str | None:
     return cfg_val if cfg_val else None
 
 
+def chatgpt_web_source_root() -> Path | None:
+    """Return the explicitly configured ChatGPTExporter archive root."""
+    source_cfg = getattr(CFG.paths.sources, "chatgpt_web", None)
+    configured = getattr(source_cfg, "root", "") if source_cfg is not None else ""
+    raw = _env_str("SYKE_CHATGPT_WEB_ROOT", configured)
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return expand_path(raw.strip())
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def chatgpt_web_excluded_project_ids() -> tuple[str, ...]:
+    """Return exact project IDs denied by the ChatGPT Web source contract."""
+    source_cfg = getattr(CFG.paths.sources, "chatgpt_web", None)
+    configured = getattr(source_cfg, "excluded_project_ids", ()) if source_cfg is not None else ()
+    env = os.getenv("SYKE_CHATGPT_WEB_EXCLUDED_PROJECT_IDS")
+    raw_values: object = env.split(",") if env is not None else configured
+    if isinstance(raw_values, str):
+        raw_values = raw_values.split(",")
+    if not isinstance(raw_values, (list, tuple)):
+        raw_values = ()
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in raw_values:
+        item = str(value).strip()
+        if item and item not in seen:
+            seen.add(item)
+            result.append(item)
+    return tuple(result)
+
+
 def _env_int(var: str, cfg_val: int) -> int:
     """Return env var as int if set, else config value."""
     env = os.getenv(var)

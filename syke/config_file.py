@@ -40,9 +40,16 @@ class AskConfig:
 
 
 @dataclass(frozen=True)
+class ChatGPTWebSourceConfig:
+    root: str = ""
+    excluded_project_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class SourcePathsConfig:
     claude_code: str = "~/.claude"
     codex: str = "~/.codex"
+    chatgpt_web: ChatGPTWebSourceConfig = field(default_factory=ChatGPTWebSourceConfig)
 
 
 @dataclass(frozen=True)
@@ -106,7 +113,7 @@ def _build_nested(cls: Any, raw: dict[str, Any]) -> Any:
         field_type = resolved_hints.get(py_key)
         if isinstance(value, dict) and hasattr(field_type, "__dataclass_fields__"):
             kwargs[py_key] = _build_nested(field_type, value)
-        elif py_key == "skills_dirs" and isinstance(value, list):
+        elif py_key in {"skills_dirs", "excluded_project_ids"} and isinstance(value, list):
             kwargs[py_key] = tuple(value)
         else:
             kwargs[py_key] = value
@@ -228,6 +235,11 @@ data_dir = "~/.syke"
 [paths.sources]
 claude_code = "~/.claude"
 codex = "~/.codex"
+
+# ChatGPT Web is opt-in: point this at one ChatGPTExporter archive.
+[paths.sources.chatgpt_web]
+root = ""
+excluded_project_ids = []
 
 [paths.distribution]
 claude_md = "~/.claude/CLAUDE.md"

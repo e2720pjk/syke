@@ -37,6 +37,20 @@ def test_get_selected_sources_ignores_corrupt_file(tmp_path: Path, monkeypatch) 
     assert get_selected_sources("test") == ()
 
 
+def test_get_selected_sources_fails_closed_for_non_object_payload(
+    tmp_path: Path, monkeypatch
+) -> None:
+    selection_file = tmp_path / "source_selection.json"
+    selection_file.write_text(json.dumps(["codex"]), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "syke.source_selection._selection_path",
+        lambda _user_id: selection_file,
+    )
+
+    assert get_selected_sources("test") == ()
+
+
 def test_get_selected_sources_ignores_invalid_payload_shape(tmp_path: Path, monkeypatch) -> None:
     selection_file = tmp_path / "source_selection.json"
     selection_file.write_text(

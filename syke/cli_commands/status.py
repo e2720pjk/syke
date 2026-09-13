@@ -113,7 +113,10 @@ def status(ctx: click.Context, use_json: bool) -> None:
             else:
                 render_setup_line("selection", "none selected")
         else:
-            render_setup_line("selection", "all detected sources")
+            render_setup_line(
+                "selection",
+                "all normal detected sources (explicit-only sources disabled)",
+            )
         onboarding = info.get("onboarding")
         if isinstance(onboarding, dict):
             status_text = str(onboarding.get("status") or "unknown")

@@ -9,6 +9,7 @@ Implementation snapshot for the current 0.5.x runtime line.
 - Canonical mutable store is `~/.syke/syke.db`.
 - Main projections are `~/.syke/MEMEX.md` and `~/.syke/PSYCHE.md`.
 - Adapter guides are markdown files at `~/.syke/adapters/{source}.md`.
+- ChatGPT Web is a projection-first, explicit-only source backed by one configured ChatGPTExporter archive; raw archive data is not a Pi read path.
 
 ## Control Surfaces
 
@@ -24,6 +25,7 @@ Implementation snapshot for the current 0.5.x runtime line.
 - Read by setup/sync/daemon runtime paths to scope selected-source behavior.
 - Invalid persisted selections fail closed to an empty selection instead of silently broadening scope.
 - `--source` remains a hidden CLI option used for automation flows.
+- With no persisted selection, normal sources remain unrestricted but explicit-only sources such as `chatgpt-web` remain disabled.
 
 ## Runtime Safety Contracts
 

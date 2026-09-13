@@ -85,6 +85,15 @@ def config_show(ctx: click.Context, raw: bool) -> None:
         },
     )
     render_kv_section("Ask", {"timeout": f"{c.ASK_TIMEOUT}s"})
+    chat_root = c.chatgpt_web_source_root()
+    render_kv_section(
+        "ChatGPT Web source",
+        {
+            "root": str(chat_root) if chat_root else "(not configured)",
+            "excluded project IDs": ", ".join(c.chatgpt_web_excluded_project_ids()) or "(none)",
+            "selection": "explicit opt-in",
+        },
+    )
     render_kv_section(
         "Daemon",
         {"interval": f"{c.DAEMON_INTERVAL}s ({c.DAEMON_INTERVAL // 60} min)"},

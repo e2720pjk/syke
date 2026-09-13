@@ -26,6 +26,7 @@ from syke.observe.catalog import (
     active_sources,
     get_source,
     is_excluded_discovered_path,
+    is_source_selected,
 )
 from syke.pi_state import get_pi_agent_dir
 from syke.runtime.child_env import child_temp_paths
@@ -60,6 +61,15 @@ _SYSTEM_READ_PATHS = [
 ]
 
 
+def _chatgpt_web_roots() -> set[Path]:
+    spec = get_source("chatgpt-web")
+    return (
+        {Path(root.path).expanduser().resolve() for root in spec.discover.roots}
+        if spec is not None
+        else set()
+    )
+
+
 def _harness_read_paths(selected_sources: tuple[str, ...] | None = None) -> list[str]:
     """Resolve read paths for the sandbox.
 
@@ -72,6 +82,7 @@ def _harness_read_paths(selected_sources: tuple[str, ...] | None = None) -> list
         paths: list[str] = []
         seen: set[str] = set()
         pi_spec = get_source("pi")
+        chatgpt_roots = _chatgpt_web_roots()
         for raw in override.split(os.pathsep):
             raw = raw.strip()
             if not raw:
@@ -82,18 +93,29 @@ def _harness_read_paths(selected_sources: tuple[str, ...] | None = None) -> list
                 continue
             if pi_spec is not None and is_excluded_discovered_path(pi_spec, expanded_path):
                 continue
+            if any(
+                expanded_path == chat_root
+                or chat_root in expanded_path.parents
+                or expanded_path in chat_root.parents
+                for chat_root in chatgpt_roots
+            ):
+                continue
             expanded = str(expanded_path)
             if expanded not in seen:
                 seen.add(expanded)
                 paths.append(expanded)
         return paths
 
-    selected_set = set(selected_sources) if selected_sources is not None else None
-
     paths: list[str] = []
     seen: set[str] = set()
+    chatgpt_roots = _chatgpt_web_roots()
     for spec in active_sources():
-        if selected_set is not None and spec.source not in selected_set:
+        if not is_source_selected(spec, selected_sources):
+            continue
+        # ChatGPT Web is projection-first.  The exporter root may contain
+        # account, raw, project, and asset data; only the workspace projection
+        # is readable by Pi.
+        if spec.source == "chatgpt-web":
             continue
         for root in spec.discover.roots:
             try:
@@ -101,6 +123,13 @@ def _harness_read_paths(selected_sources: tuple[str, ...] | None = None) -> list
             except OSError:
                 continue
             if is_excluded_discovered_path(spec, expanded_path):
+                continue
+            if any(
+                expanded_path == chat_root
+                or chat_root in expanded_path.parents
+                or expanded_path in chat_root.parents
+                for chat_root in chatgpt_roots
+            ):
                 continue
             expanded = str(expanded_path)
             if expanded not in seen:
@@ -287,6 +316,9 @@ def generate_seatbelt_profile(
     for sensitive in _SENSITIVE_DIRS:
         full = f"{home}/{sensitive}"
         for alias in _path_aliases(full):
+            lines.append(f'(deny file-read* (subpath "{alias}"))')
+    for chat_root in _chatgpt_web_roots():
+        for alias in _path_aliases(str(chat_root)):
             lines.append(f'(deny file-read* (subpath "{alias}"))')
     lines.append("")
 

@@ -78,13 +78,62 @@ class HarnessRegistry:
             return HarnessHealth(source=source, status="not_installed", last_check=now)
 
         files = iter_discovered_files(spec)
+        roots = {"roots": [str(root) for root in discovered_roots(spec)]}
+        chatgpt_details: dict[str, object] = {}
+        if spec.source == "chatgpt-web":
+            from syke.config import chatgpt_web_excluded_project_ids, chatgpt_web_source_root
+            from syke.observe.chatgpt_web import inspect_chatgpt_web_archive
+
+            root = chatgpt_web_source_root()
+            if root is not None:
+                diagnostics = inspect_chatgpt_web_archive(
+                    root,
+                    chatgpt_web_excluded_project_ids(),
+                )
+                chatgpt_details = {
+                    key: diagnostics[key]
+                    for key in (
+                        "conversations_discovered",
+                        "excluded_conversations",
+                        "projects",
+                        "validation_terminal_state",
+                    )
+                    if key in diagnostics
+                }
+                error = diagnostics.get("error")
+                if isinstance(error, dict) and error.get("reason"):
+                    chatgpt_details["error_reason"] = error["reason"]
+                if not diagnostics.get("archive_validated", False):
+                    detail = (
+                        error.get("detail")
+                        if isinstance(error, dict)
+                        else "archive validation failed"
+                    )
+                    reason = error.get("reason") if isinstance(error, dict) else None
+                    error_text = f"{reason}: {detail}" if reason else str(detail)
+                    latest_mtime = (
+                        max(files, key=lambda path: (path.stat().st_mtime, str(path)))
+                        .stat()
+                        .st_mtime
+                        if files
+                        else None
+                    )
+                    return HarnessHealth(
+                        source=source,
+                        status="invalid",
+                        last_check=now,
+                        files_found=len(files),
+                        latest_file_mtime=latest_mtime,
+                        error=error_text,
+                        details={**roots, **chatgpt_details},
+                    )
         if not files:
             return HarnessHealth(
                 source=source,
                 status="not_installed",
                 last_check=now,
                 error="No source artifacts found",
-                details={"roots": [str(root) for root in discovered_roots(spec)]},
+                details={**roots, **chatgpt_details},
             )
 
         latest = max(files, key=lambda path: (path.stat().st_mtime, str(path)))
@@ -99,9 +148,7 @@ class HarnessRegistry:
             files_found=len(files),
             latest_file_mtime=latest.stat().st_mtime,
             error=None if has_adapter else "No deployed adapter",
-            details={
-                "roots": [str(root) for root in discovered_roots(spec)],
-            },
+            details={**roots, **chatgpt_details},
         )
 
     def check_all_health(self) -> dict[str, HarnessHealth]:

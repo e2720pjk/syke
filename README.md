@@ -59,7 +59,7 @@ Setup walks through:
 
 - provider/auth setup
 - local harness detection
-- source selection
+- source selection (ChatGPT Web is explicit-only)
 - workspace initialization at `~/.syke/`
 - background service setup
 - first memory synthesis
@@ -123,8 +123,16 @@ currently include:
 - Antigravity
 - Hermes
 - Gemini CLI
+- ChatGPT Web via an explicitly configured ChatGPTExporter archive
 
 See [PLATFORMS.md](PLATFORMS.md) for exact artifact paths and current status.
+
+ChatGPT Web is opt-in: configure one exporter root under
+`[paths.sources.chatgpt_web]`, then select `chatgpt-web` during setup or with
+`--source`. Syke filters denied project memberships and materializes a bounded,
+allowlisted current-branch projection under `~/.syke/sources/chatgpt-web/`.
+The exporter root, raw records, assets, project instructions, and account data
+are never granted to Pi.
 
 OpenCode discovery reads only `~/.local/share/opencode/opencode*.db`. The
 LLM-first adapter opens the live WAL-mode database read-only (never
@@ -163,6 +171,7 @@ Syke is local-machine first.
 - Adapter guides: `~/.syke/adapters/{source}.md`
 - Pi provider/runtime state: `~/.syke/pi-agent/`
 - External Pi session history: `~/.pi/agent/sessions/**/*.jsonl`
+- Optional ChatGPT Web projection: `~/.syke/sources/chatgpt-web/` (raw exporter data stays at its configured root)
 
 On macOS, ask and synthesis run Pi under a filesystem sandbox when available.
 The sandbox grants scoped local reads, Syke workspace writes, temp writes, and

@@ -15,7 +15,7 @@ import time as _time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from syke.observe.catalog import active_sources, discovered_roots
+from syke.observe.catalog import active_sources, discovered_roots, is_source_selected
 
 logger = logging.getLogger(__name__)
 
@@ -100,15 +100,22 @@ def _build_psyche_md(
     rooted there to prevent listing live ~/.codex / ~/.claude paths.
     """
     adapters_dir = workspace_root / "adapters"
-    selected_set = set(selected_sources) if selected_sources is not None else None
-
     adapter_lines = []
     listed_sources: set[str] = set()
     for spec in active_sources():
-        if selected_set is not None and spec.source not in selected_set:
+        if not is_source_selected(spec, selected_sources):
+            continue
+        adapter_md = adapters_dir / f"{spec.source}.md"
+        if spec.source == "chatgpt-web":
+            if adapter_md.exists():
+                adapter_lines.append(
+                    "- **chatgpt-web**: `adapters/chatgpt-web.md` — bounded data at "
+                    "`sources/chatgpt-web/projection.jsonl` and "
+                    "`sources/chatgpt-web/run.json`"
+                )
+                listed_sources.add(spec.source)
             continue
         roots = discovered_roots(spec, home=home)
-        adapter_md = adapters_dir / f"{spec.source}.md"
         if adapter_md.exists() and roots:
             paths = ", ".join(f"`{r}`" for r in roots)
             adapter_lines.append(
@@ -119,7 +126,14 @@ def _build_psyche_md(
     if adapters_dir.exists():
         for adapter_md in sorted(adapters_dir.glob("*.md")):
             source = adapter_md.stem
-            if selected_set is not None and source not in selected_set:
+            spec = next((item for item in active_sources() if item.source == source), None)
+            if source == "chatgpt-web" and spec is None:
+                # A previously configured dynamic source may be gone now; do
+                # not leave its adapter visible without a live projection.
+                continue
+            if spec is not None and not is_source_selected(spec, selected_sources):
+                continue
+            if spec is None and selected_sources is not None and source not in selected_sources:
                 continue
             if source in listed_sources:
                 continue

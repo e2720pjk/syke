@@ -69,14 +69,34 @@ def _launch_background_onboarding(
     return LOG_PATH
 
 
+def _detected_source_names(source_items: list[dict[str, object]]) -> list[str]:
+    return [cast(str, item["source"]) for item in source_items if item.get("detected")]
+
+
+def _default_source_names(
+    source_items: list[dict[str, object]],
+    previously_selected: tuple[str, ...] | list[str] = (),
+) -> list[str]:
+    return [
+        cast(str, item["source"])
+        for item in source_items
+        if item.get("detected")
+        and (
+            not item.get("explicit_only", False) or cast(str, item["source"]) in previously_selected
+        )
+    ]
+
+
 def _select_agent_sources(
     inspect_info: dict[str, object],
     selected_sources_cli: tuple[str, ...],
 ) -> tuple[list[str], list[dict[str, object]], list[str]]:
     source_items = cast(list[dict[str, object]], inspect_info.get("sources") or [])
-    detected_sources = [cast(str, s["source"]) for s in source_items if s.get("detected")]
+    detected_sources = _detected_source_names(source_items)
+    persisted = inspect_info.get("selected_sources")
+    previously_selected = persisted if isinstance(persisted, (list, tuple)) else ()
     if not selected_sources_cli:
-        return detected_sources, source_items, []
+        return _default_source_names(source_items, previously_selected), source_items, []
 
     requested = list(dict.fromkeys(selected_sources_cli))
     unknown = [source for source in requested if source not in detected_sources]
@@ -382,12 +402,11 @@ def setup(
         console.print("\n  [dim]No changes made.[/dim]")
         return
 
-    detected_sources = [
-        cast(dict[str, object], item)["source"]
-        for item in cast(list[dict[str, object]], inspect_info.get("sources") or [])
-        if cast(dict[str, object], item).get("detected")
-    ]
-    selected_sources = detected_sources
+    source_items = cast(list[dict[str, object]], inspect_info.get("sources") or [])
+    detected_sources = _detected_source_names(source_items)
+    persisted = inspect_info.get("selected_sources")
+    previously_selected = persisted if isinstance(persisted, (list, tuple)) else ()
+    selected_sources = _default_source_names(source_items, previously_selected)
     if selected_sources_cli:
         requested = list(dict.fromkeys(selected_sources_cli))
         unknown = [source for source in requested if source not in detected_sources]
@@ -398,7 +417,8 @@ def setup(
         selected_sources = requested
     elif not yes and detected_sources:
         selected_sources = choose_setup_sources_interactive(
-            cast(list[dict[str, object]], inspect_info.get("sources") or [])
+            source_items,
+            previously_selected=previously_selected,
         )
     if detected_sources or selected_sources_cli:
         set_selected_sources(user_id, selected_sources)

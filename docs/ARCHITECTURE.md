@@ -14,7 +14,7 @@ Operationally, the current system is simple:
 
 1. `syke auth ...` selects the provider Syke will run with.
 2. Adapter markdowns describe each harness's data format and location.
-3. The agent reads harness data directly via those adapter guides and bash/sqlite3.
+3. The agent reads ordinary harness data directly via those adapter guides and bash/sqlite3; projection-first sources are prepared by Syke before Pi runs.
 4. Syke writes learned mutable memory into `syke.db`.
 5. Pi runs `ask` and synthesis with: MEMEX + adapter markdowns + bash/sqlite3.
 6. External harnesses consume memex projections and other downstream distribution files.
@@ -43,7 +43,7 @@ Authority is split cleanly:
 **Memory is maintenance.** Beyond store and retrieve, memory needs active care: synthesis cycles, daemon-driven updates, health checks, evolution tracking. This is why agentic memory requires an agent — not just a database with an API, but an autonomous process that maintains, curates, and evolves the knowledge base.
 
 **Core principles:**
-- **The agent reads harness data directly** — adapter markdowns describe format and location; the agent uses bash/sqlite3 to inspect harness artifacts at synthesis time. No Python copy pipeline, no events.db staging.
+- **The agent reads harness data directly where safe** — adapter markdowns describe format and location; ordinary harnesses are inspected with bash/sqlite3 at synthesis time. Projection-first sources are validated and bounded by Syke first; no events.db staging.
 - **Evidence ≠ inference** — raw harness data (what happened) stays at the source; memories (what it means) are mutable and agent-written in syke.db
 - **The agent crawls text** — FTS5/BM25 for retrieval, LLM for understanding. No vector DB needed.
 - **Graph over SQLite** — memories connect through sparse, bidirectional links with natural language reasons
@@ -120,6 +120,23 @@ stable message ID (v2 wins a duplicate; legacy-only rows are reconstructed
 from their parts). The guide also defines the allowlist, privacy boundary,
 truncation, and pagination rules so raw JSON, reasoning blobs, and tool output
 do not become unbounded evidence.
+
+#### ChatGPT Web projection boundary
+
+ChatGPT Web is the exception to direct adapter reads. When a user configures
+one ChatGPTExporter archive and explicitly selects `chatgpt-web`, trusted Syke
+validates its manifest, optional completeness reports, index hash/counts, and
+normalized body identities. It merges duplicate memberships and applies exact
+project exclusions before opening any conversation body. It then writes an
+atomic, bounded JSONL projection containing only current-branch user/assistant
+text, useful code, stable identity, and omission markers for assets/citations.
+
+The configured exporter root is never a Pi sandbox read path. `run.json`
+contains bounded operational diagnostics without the root path or conversation
+content. A rejected refresh keeps the previous accepted projection; deselection
+removes the projection before workspace prompts are rebuilt. This keeps the
+archive's raw records, project instructions, assets, and account/session state
+outside the Pi privacy boundary.
 
 ### Observe Bootstrap
 
@@ -405,6 +422,7 @@ syke/
 │   ├── __init__.py             # Public API: catalog, bootstrap, trace
 │   ├── bootstrap.py            # Install adapter markdowns for active harnesses
 │   ├── catalog.py              # Centralized SourceSpec catalog
+│   ├── chatgpt_web.py          # Validated bounded ChatGPTExporter projection
 │   ├── content_filter.py       # Pre-ingestion privacy and credential filters
 │   ├── registry.py             # Adapter resolution
 │   ├── trace.py                # Facade over rollout trace self-observation
@@ -416,6 +434,7 @@ syke/
 │       ├── adapter-gemini-cli.md
 │       ├── adapter-hermes.md
 │       ├── adapter-opencode.md
+│       ├── adapter-chatgpt-web.md
 │       └── adapter-antigravity.md
 ├── memory/
 │   └── memex.py                # Memex read/write/bootstrap
@@ -435,7 +454,7 @@ syke/
 - architecture and synthesis are still under active experimentation
 - **Pi-only runtime** for ask and synthesis
 - **workspace contract** = `syke.db`, `MEMEX.md`, `PSYCHE.md`, adapter markdowns, `sessions/`
-- **agent reads harness data directly** via adapter.md guides + bash/sqlite3
+- **agent reads ordinary harness data directly** via adapter.md guides + bash/sqlite3; ChatGPT Web is prepared as a bounded projection first
 - **MEMEX is the timeline** indexed by synthesis cycle records
 - **SQLite + FTS5** for storage and retrieval (FTS5 sync via triggers)
 - **state safety boundary** protects `syke.db` before every synthesis handoff and restores on hard gate failure
@@ -531,6 +550,7 @@ graph TD
     end
     subgraph Observe
         catalog[observe/catalog.py]
+        chatgpt[observe/chatgpt_web.py]
         registry[observe/registry.py]
         bootstrap[observe/bootstrap.py]
         seeds[observe/seeds/*.md]
@@ -575,6 +595,7 @@ graph TD
     daemon --> bootstrap
     daemon --> workspace
     workspace --> bootstrap
+    workspace --> chatgpt
     workspace --> psyche
     registry --> catalog
     registry --> seeds

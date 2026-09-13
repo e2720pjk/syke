@@ -518,16 +518,28 @@ def _discovered_source_file_counts(
     *,
     home: Path | None = None,
 ) -> dict[str, int]:
-    from syke.observe.catalog import active_sources, iter_discovered_files
+    from syke.observe.catalog import active_sources, is_source_selected, iter_discovered_files
 
-    selected_set = set(selected_sources) if selected_sources is not None else None
     counts: dict[str, int] = {}
     for spec in active_sources():
-        if selected_set is not None and spec.source not in selected_set:
+        if not is_source_selected(spec, selected_sources):
             continue
         try:
-            count = len(iter_discovered_files(spec, home=home))
-        except OSError:
+            if spec.source == "chatgpt-web":
+                from syke.config import chatgpt_web_excluded_project_ids, chatgpt_web_source_root
+                from syke.observe.chatgpt_web import inspect_chatgpt_web_archive
+
+                root = chatgpt_web_source_root()
+                if root is None:
+                    continue
+                diagnostics = inspect_chatgpt_web_archive(
+                    root,
+                    chatgpt_web_excluded_project_ids(),
+                )
+                count = int(diagnostics.get("conversations_discovered", 0) or 0)
+            else:
+                count = len(iter_discovered_files(spec, home=home))
+        except (OSError, ValueError, TypeError):
             logger.debug("Source discovery failed for %s", spec.source, exc_info=True)
             continue
         if count:
@@ -547,6 +559,12 @@ def _first_run_bootstrap_prompt(source_file_counts: dict[str, int]) -> str:
         f"- {source}: {count} discovered files/rows"
         for source, count in sorted(source_file_counts.items())
     )
+    chatgpt_read_rule = (
+        "- For chatgpt-web, read only `sources/chatgpt-web/run.json` and its "
+        "bounded `projection.jsonl`; never follow the exporter root.\n"
+        if "chatgpt-web" in source_file_counts
+        else ""
+    )
     return f"""
 
 <first_run_bootstrap>
@@ -557,7 +575,8 @@ Detected source inventory:
 
 Use the bootstrap path, not the steady-state shortcut:
 - Read the selected adapter markdowns in `adapters/`.
-- Follow the listed source roots directly.
+{chatgpt_read_rule}- Follow the listed source roots directly only for adapters that explicitly
+  permit it.
 - Count/list newest files or rows before sampling.
 - Sample recent sessions from each selected source until you can identify stable
   threads, decisions, projects, or active questions.
@@ -992,7 +1011,11 @@ def pi_synthesize(
             except Exception:
                 logger.debug("Failed to mark restored cycle failed", exc_info=True)
 
-        trace_extras = {"memex_updated": False, **(extras or {})}
+        trace_extras = {
+            "memex_updated": False,
+            "source_run": result.get("source_run"),
+            **(extras or {}),
+        }
         if recovery_point is not None:
             trace_extras["recovery_point"] = recovery_point.id
             trace_extras["recovery_backup_path"] = recovery_point.backup_path
@@ -1037,11 +1060,33 @@ def pi_synthesize(
 
         from syke.runtime.workspace import initialize_workspace
 
-        initialize_workspace(
-            workspace_root=_ws_root,
-            home=home,
-            selected_sources=selected_sources,
-        )
+        try:
+            source_run = initialize_workspace(
+                workspace_root=_ws_root,
+                home=home,
+                selected_sources=selected_sources,
+            )
+            if source_run is not None:
+                result["source_run"] = source_run.to_dict()
+        except Exception as exc:
+            logger.error("Source/workspace preparation failed: %s", exc)
+            source_reason = getattr(exc, "reason", None)
+            if source_reason:
+                error_dict = getattr(exc, "to_dict", None)
+                result["source_run"] = {
+                    "source": "chatgpt-web",
+                    "archive_validated": False,
+                    "error": error_dict() if callable(error_dict) else str(exc),
+                }
+                result["reason"] = str(source_reason)
+                result["error"] = f"chatgpt-web source: {getattr(exc, 'detail', str(exc))}"
+            else:
+                result["reason"] = "source_refresh_failed"
+                result["error"] = str(exc)
+            result["status"] = "failed"
+            result["duration_ms"] = _elapsed_ms()
+            result["memex_updated"] = False
+            return result
         _progress("workspace ready")
 
         try:
@@ -1743,7 +1788,10 @@ def pi_synthesize(
             stop_reason=pi_result.stop_reason,
             runtime_reused=runtime_reused,
             runtime_status=runtime_status,
-            extras={"memex_updated": memex_updated},
+            extras={
+                "memex_updated": memex_updated,
+                "source_run": result.get("source_run"),
+            },
         )
         result["trace_id"] = trace_id
 
