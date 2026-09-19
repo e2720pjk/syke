@@ -40,6 +40,10 @@ MAX_PROJECTION_BYTES = 16 * 1024 * 1024
 MAX_DIAGNOSTIC_ITEMS = 128
 
 _KNOWN_SCOPES = {"main", "project", "shared", "archived"}
+_COMPLETE_CONVERSATION_TERMINAL_STATES = frozenset(
+    {"complete", "conversations_complete_assets_partial"}
+)
+_ASSET_FINDING_PREFIXES = ("ASSET_", "PROJECT_ASSET_")
 
 
 class ChatGPTWebSourceError(RuntimeError):
@@ -71,6 +75,7 @@ class _ArchiveInfo:
     workspace_fingerprint: str
     expected_conversation_count: int | None = None
     complete_conversation_count: int | None = None
+    extra_retained_conversation_count: int | None = None
     validation_terminal_state: str | None = None
     partial_asset_reference_count: int | None = None
     validation_project_count: int | None = None
@@ -122,6 +127,7 @@ class ChatGPTWebRun:
     projection_path: str | None = None
     expected_conversation_count: int | None = None
     complete_conversation_count: int | None = None
+    extra_retained_conversation_count: int | None = None
     validation_terminal_state: str | None = None
     partial_asset_reference_count: int | None = None
     validation_project_count: int | None = None
@@ -192,6 +198,7 @@ class ChatGPTWebRun:
             "projection_path": self.projection_path,
             "expected_conversation_count": self.expected_conversation_count,
             "complete_conversation_count": self.complete_conversation_count,
+            "extra_retained_conversation_count": self.extra_retained_conversation_count,
             "validation_terminal_state": self.validation_terminal_state,
             "partial_asset_reference_count": self.partial_asset_reference_count,
             "validation_project_count": self.validation_project_count,
@@ -343,6 +350,7 @@ def _optional_json(root: Path, relative: str, *, max_bytes: int) -> object | Non
         archive_root=root,
     )
 
+
 def _validated_count(value: object, field_name: str) -> int | None:
     if value is None:
         return None
@@ -366,9 +374,7 @@ def _validate_optional_metadata(
             raise ChatGPTWebSourceError(
                 "invalid_archive_metadata", "currentIndexHashes.conversations is invalid"
             )
-        if (
-            _sha256_file(index_path, max_bytes=MAX_INDEX_BYTES, archive_root=root) != expected_hash
-        ):
+        if _sha256_file(index_path, max_bytes=MAX_INDEX_BYTES, archive_root=root) != expected_hash:
             raise ChatGPTWebSourceError(
                 "archive_hash_mismatch", "conversation index hash does not match archive"
             )
@@ -376,6 +382,7 @@ def _validate_optional_metadata(
     result: dict[str, int | str | None] = {
         "expected": None,
         "complete": None,
+        "extra_retained": None,
         "terminal": None,
         "partial_assets": None,
         "projects": None,
@@ -397,13 +404,8 @@ def _validate_optional_metadata(
                 raise ChatGPTWebSourceError(
                     "invalid_validation_report", f"validation.json {key} does not match archive"
                 )
-        findings = report.get("findings", [])
-        if not isinstance(findings, list) or findings:
-            raise ChatGPTWebSourceError(
-                "archive_validation_findings", "validation.json contains findings"
-            )
         terminal = report.get("terminalState")
-        if not isinstance(terminal, str) or not terminal.startswith("conversations_complete"):
+        if not isinstance(terminal, str) or terminal not in _COMPLETE_CONVERSATION_TERMINAL_STATES:
             raise ChatGPTWebSourceError(
                 "archive_incomplete", "conversation validation is not complete"
             )
@@ -417,11 +419,54 @@ def _validate_optional_metadata(
             raise ChatGPTWebSourceError(
                 "archive_incomplete", "expected and completed conversation counts differ"
             )
+        partial_assets = _validated_count(
+            report.get("partialAssetReferenceCount", 0), "partialAssetReferenceCount"
+        )
+        findings = report.get("findings", [])
+        if not isinstance(findings, list):
+            raise ChatGPTWebSourceError(
+                "invalid_validation_report", "validation.json findings must be a list"
+            )
+        has_asset_error = False
+        for finding in findings:
+            if not isinstance(finding, dict):
+                raise ChatGPTWebSourceError(
+                    "invalid_validation_report", "validation.json finding is invalid"
+                )
+            severity = finding.get("severity")
+            code = finding.get("code")
+            if severity not in {"warning", "error"} or not isinstance(code, str):
+                raise ChatGPTWebSourceError(
+                    "invalid_validation_report", "validation.json finding is invalid"
+                )
+            if severity == "error":
+                if terminal != "conversations_complete_assets_partial" or not code.startswith(
+                    _ASSET_FINDING_PREFIXES
+                ):
+                    raise ChatGPTWebSourceError(
+                        "archive_validation_findings",
+                        "validation.json contains conversation findings",
+                    )
+                has_asset_error = True
+        if terminal == "complete" and partial_assets:
+            raise ChatGPTWebSourceError(
+                "archive_validation_findings", "complete validation reports partial assets"
+            )
+        if (
+            terminal == "conversations_complete_assets_partial"
+            and not partial_assets
+            and not has_asset_error
+        ):
+            raise ChatGPTWebSourceError(
+                "invalid_validation_report", "partial validation has no asset finding"
+            )
         result["expected"] = expected_count
         result["complete"] = complete_count
+        result["extra_retained"] = _validated_count(
+            report.get("extraRetainedConversationCount", 0), "extraRetainedConversationCount"
+        )
         result["projects"] = _validated_count(report.get("projectCount"), "projectCount")
-        partial_assets = report.get("partialAssetReferenceCount", 0)
-        result["partial_assets"] = _validated_count(partial_assets, "partialAssetReferenceCount")
+        result["partial_assets"] = partial_assets
         result["terminal"] = terminal
         report_hash = report.get("conversationsIndexHash")
         if report_hash is not None:
@@ -457,8 +502,11 @@ def _validate_optional_metadata(
         if inventory.get("complete") is not True:
             raise ChatGPTWebSourceError("archive_incomplete", "inventory.json is not complete")
         absent = inventory.get("absentConversations", [])
-        if not isinstance(absent, list) or absent:
-            raise ChatGPTWebSourceError("archive_incomplete", "inventory has absent conversations")
+        if not isinstance(absent, list):
+            raise ChatGPTWebSourceError(
+                "invalid_inventory", "inventory absentConversations must be a list"
+            )
+        # Retained records are historical archive entries, not an incomplete inventory.
         conversations = inventory.get("conversations")
         if not isinstance(conversations, list):
             raise ChatGPTWebSourceError(
@@ -539,10 +587,17 @@ def _validate_archive(root: str | Path) -> _ArchiveInfo:
         workspace_fingerprint=fingerprint,
         expected_conversation_count=metadata["expected"],
         complete_conversation_count=metadata["complete"],
+        extra_retained_conversation_count=metadata["extra_retained"],
         validation_terminal_state=metadata["terminal"],
         partial_asset_reference_count=metadata["partial_assets"],
         validation_project_count=metadata["projects"],
     )
+
+
+def _validated_index_count(archive: _ArchiveInfo) -> int | None:
+    if archive.expected_conversation_count is None:
+        return None
+    return archive.expected_conversation_count + (archive.extra_retained_conversation_count or 0)
 
 
 def _normalize_memberships(value: object) -> list[dict[str, str]]:
@@ -1308,6 +1363,7 @@ def project_chatgpt_web_archive(
         conversations_discovered=len(index.rows),
         expected_conversation_count=archive.expected_conversation_count,
         complete_conversation_count=archive.complete_conversation_count,
+        extra_retained_conversation_count=archive.extra_retained_conversation_count,
         validation_terminal_state=archive.validation_terminal_state,
         partial_asset_reference_count=archive.partial_asset_reference_count,
         validation_project_count=archive.validation_project_count,
@@ -1320,28 +1376,14 @@ def project_chatgpt_web_archive(
             f"asset references are partial ({archive.partial_asset_reference_count}); "
             "assets were not read"
         )
-    if (
-        archive.expected_conversation_count is not None
-        and archive.expected_conversation_count != len(index.rows)
-    ):
+    expected_index_count = _validated_index_count(archive)
+    if expected_index_count is not None and expected_index_count != len(index.rows):
         run.archive_validated = False
         run.failure_reasons["conversation_count_mismatch"] += 1
         run.failed.append(
             {
                 "reason": "conversation_count_mismatch",
                 "detail": "validated conversation count differs from index",
-            }
-        )
-    if (
-        archive.complete_conversation_count is not None
-        and archive.complete_conversation_count != len(index.rows)
-    ):
-        run.archive_validated = False
-        run.failure_reasons["conversation_count_mismatch"] += 1
-        run.failed.append(
-            {
-                "reason": "conversation_count_mismatch",
-                "detail": "complete conversation count differs from index",
             }
         )
     if (
@@ -1467,6 +1509,7 @@ def inspect_chatgpt_web_archive(
                 "assets were not read"
             )
         validation_error: ChatGPTWebSourceError | None = None
+        expected_index_count = _validated_index_count(archive)
         if index.failures:
             first_failure = index.failures[0]
             conversation_id = first_failure.get("conversation_id")
@@ -1475,21 +1518,10 @@ def inspect_chatgpt_web_archive(
                 str(first_failure.get("detail", "conversation index validation failed")),
                 conversation_id=conversation_id if isinstance(conversation_id, str) else None,
             )
-        elif (
-            archive.expected_conversation_count is not None
-            and len(index.rows) != archive.expected_conversation_count
-        ):
+        elif expected_index_count is not None and len(index.rows) != expected_index_count:
             validation_error = ChatGPTWebSourceError(
                 "conversation_count_mismatch",
-                "expected conversation count differs from index",
-            )
-        elif (
-            archive.complete_conversation_count is not None
-            and len(index.rows) != archive.complete_conversation_count
-        ):
-            validation_error = ChatGPTWebSourceError(
-                "conversation_count_mismatch",
-                "complete conversation count differs from index",
+                "validated conversation count differs from index",
             )
         elif (
             archive.validation_project_count is not None
@@ -1516,6 +1548,7 @@ def inspect_chatgpt_web_archive(
             "workspace_fingerprint": archive.workspace_fingerprint,
             "expected_conversation_count": archive.expected_conversation_count,
             "complete_conversation_count": archive.complete_conversation_count,
+            "extra_retained_conversation_count": archive.extra_retained_conversation_count,
             "validation_terminal_state": archive.validation_terminal_state,
             "partial_asset_reference_count": archive.partial_asset_reference_count,
             "validation_project_count": archive.validation_project_count,

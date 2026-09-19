@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -249,6 +250,139 @@ def test_registry_reports_a_valid_configured_archive(
     assert health.details["conversations_discovered"] == 0
 
 
+@pytest.mark.parametrize(
+    ("terminal_state", "partial_assets", "findings"),
+    [
+        ("complete", 0, []),
+        (
+            "conversations_complete_assets_partial",
+            1,
+            [{"severity": "error", "code": "ASSET_HASH_MISMATCH"}],
+        ),
+    ],
+)
+def test_setup_detects_conversation_complete_exporter_archives_with_retained_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    terminal_state: str,
+    partial_assets: int,
+    findings: list[dict[str, str]],
+) -> None:
+    current = _row("current", memberships=[{"scope": "main"}])
+    retained = _row("retained", memberships=[{"scope": "main"}])
+    retained["absentFromCurrentInventory"] = True
+    root = _make_archive(
+        tmp_path,
+        [current, retained],
+        bodies={"current": _body("current"), "retained": _body("retained")},
+    )
+    index_path = root / "indexes" / "conversations.jsonl"
+    index_hash = hashlib.sha256(index_path.read_bytes()).hexdigest()
+    manifest_path = root / "archive.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["currentIndexHashes"] = {"conversations": index_hash}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    (root / "reports").mkdir()
+    (root / "reports" / "validation.json").write_text(
+        json.dumps(
+            {
+                "provider": "chatgpt-web",
+                "schemaVersion": 1,
+                "workspaceFingerprint": "fixture-fingerprint",
+                "terminalState": terminal_state,
+                "expectedConversationCount": 1,
+                "completeConversationCount": 1,
+                "extraRetainedConversationCount": 1,
+                "partialAssetReferenceCount": partial_assets,
+                "projectCount": 0,
+                "conversationsIndexHash": index_hash,
+                "findings": findings,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "inventory.json").write_text(
+        json.dumps(
+            {
+                "provider": "chatgpt-web",
+                "schemaVersion": 1,
+                "workspaceFingerprint": "fixture-fingerprint",
+                "complete": True,
+                "chains": [{"complete": True}],
+                "conversations": [{"conversationId": "current"}],
+                "absentConversations": [
+                    {"conversationId": "retained"},
+                    {"conversationId": "older-unretained"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SYKE_CHATGPT_WEB_ROOT", str(root))
+
+    from syke.cli_support.setup_support import setup_source_inventory
+
+    source = next(
+        item for item in setup_source_inventory("test") if item["source"] == "chatgpt-web"
+    )
+    assert source["detected"] is True
+    assert source["selectable"] is True
+    assert source["files_found"] == 2
+    archive = source["archive"]
+    assert isinstance(archive, dict)
+    assert archive["expected_conversation_count"] == 1
+    assert archive["complete_conversation_count"] == 1
+    assert archive["extra_retained_conversation_count"] == 1
+    assert archive["conversations_discovered"] == 2
+
+    run = project_chatgpt_web_archive(root, output_path=tmp_path / "projection.jsonl")
+    assert run.accepted is True
+    assert run.conversations_processed == 2
+
+
+@pytest.mark.parametrize(
+    ("terminal_state", "findings", "reason"),
+    [
+        ("incomplete", [], "archive_incomplete"),
+        (
+            "complete",
+            [{"severity": "error", "code": "CONVERSATION_GRAPH_MISMATCH"}],
+            "archive_validation_findings",
+        ),
+    ],
+)
+def test_inspect_rejects_incomplete_or_inconsistent_exporter_validation(
+    tmp_path: Path,
+    terminal_state: str,
+    findings: list[dict[str, str]],
+    reason: str,
+) -> None:
+    root = _make_archive(
+        tmp_path,
+        [_row("one", memberships=[{"scope": "main"}])],
+    )
+    (root / "reports").mkdir()
+    (root / "reports" / "validation.json").write_text(
+        json.dumps(
+            {
+                "provider": "chatgpt-web",
+                "schemaVersion": 1,
+                "workspaceFingerprint": "fixture-fingerprint",
+                "findings": findings,
+                "terminalState": terminal_state,
+                "expectedConversationCount": 1,
+                "completeConversationCount": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    diagnostics = inspect_chatgpt_web_archive(root)
+
+    assert diagnostics["archive_validated"] is False
+    assert diagnostics["error"]["reason"] == reason
+
+
 def test_index_hash_mismatch_blocks_acceptance(tmp_path: Path) -> None:
     root = _make_archive(
         tmp_path,
@@ -278,9 +412,10 @@ def test_inspect_rejects_validation_count_mismatch(tmp_path: Path) -> None:
                 "schemaVersion": 1,
                 "workspaceFingerprint": "fixture-fingerprint",
                 "findings": [],
-                "terminalState": "conversations_complete",
-                "expectedConversationCount": 2,
-                "completeConversationCount": 2,
+                "terminalState": "complete",
+                "expectedConversationCount": 1,
+                "completeConversationCount": 1,
+                "extraRetainedConversationCount": 1,
             }
         ),
         encoding="utf-8",
@@ -329,7 +464,7 @@ def test_inventory_can_include_records_omitted_from_normalized_index(tmp_path: P
                 "schemaVersion": 1,
                 "workspaceFingerprint": "fixture-fingerprint",
                 "findings": [],
-                "terminalState": "conversations_complete",
+                "terminalState": "complete",
                 "expectedConversationCount": 1,
                 "completeConversationCount": 1,
             }
