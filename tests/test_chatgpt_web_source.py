@@ -8,6 +8,7 @@ import pytest
 
 from syke.observe.catalog import active_sources, get_source, is_source_selected
 from syke.observe.chatgpt_web import (
+    MAX_CONVERSATION_BYTES,
     ChatGPTWebSourceError,
     inspect_chatgpt_web_archive,
     prepare_chatgpt_web_source,
@@ -502,6 +503,46 @@ def test_empty_exclusion_list_keeps_source_valid(tmp_path: Path) -> None:
     assert run.excluded_project_ids == ()
     assert run.conversations_eligible == 1
     assert run.conversations_processed == 1
+
+
+def test_conversation_over_32_mib_under_48_mib_projects(tmp_path: Path) -> None:
+    conversation_id = "large"
+    body = _body(conversation_id)
+    body["extensions"] = {"padding": "x" * (33 * 1024 * 1024)}
+    row = _row(conversation_id, memberships=[{"scope": "main"}])
+    root = _make_archive(tmp_path, [row], bodies={conversation_id: body})
+    body_path = root / "conversations" / conversation_id / "conversation.json"
+    output = tmp_path / "projection.jsonl"
+
+    assert body_path.stat().st_size > 32 * 1024 * 1024
+    assert body_path.stat().st_size <= MAX_CONVERSATION_BYTES
+
+    run = project_chatgpt_web_archive(root, output_path=output)
+
+    assert run.accepted is True
+    assert run.conversations_processed == 1
+    assert run.conversations_failed == 0
+    assert json.loads(output.read_text(encoding="utf-8"))["conversation_id"] == conversation_id
+
+
+def test_conversation_over_48_mib_fails_closed(tmp_path: Path) -> None:
+    conversation_id = "too-large"
+    body = _body(conversation_id)
+    body["extensions"] = {"padding": "x" * (49 * 1024 * 1024)}
+    row = _row(conversation_id, memberships=[{"scope": "main"}])
+    root = _make_archive(tmp_path, [row], bodies={conversation_id: body})
+    body_path = root / "conversations" / conversation_id / "conversation.json"
+    output = tmp_path / "projection.jsonl"
+
+    assert body_path.stat().st_size > MAX_CONVERSATION_BYTES
+
+    run = project_chatgpt_web_archive(root, output_path=output)
+
+    assert run.accepted is False
+    assert run.conversations_processed == 0
+    assert run.failure_reasons["read_limit_exceeded"] == 1
+    assert run.failed[0]["conversation_id"] == conversation_id
+    assert output.read_text(encoding="utf-8") == ""
 
 
 def test_exclusion_is_deny_wins_before_body_read(tmp_path: Path) -> None:

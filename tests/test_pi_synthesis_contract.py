@@ -16,6 +16,7 @@ import pytest  # pyright: ignore[reportMissingImports]
 
 import syke.runtime as runtime_module
 from syke.db import SykeDB
+from syke.db_safety import capture_baseline, validate_state_after_cycle
 from syke.llm import pi_client
 from syke.llm.backends import pi_synthesis
 from syke.memory.memex import update_memex
@@ -138,6 +139,10 @@ def test_sync_memex_prefers_canonical_db_over_stale_artifact(
         "artifact_written": True,
     }
     assert db.get_memex(user_id)["content"] == "canonical db memex"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM memories WHERE user_id = ? AND source_event_ids = ?",
+        (user_id, '["__memex__"]'),
+    ).fetchone()[0] == 2
     written = memex_path.read_text(encoding="utf-8")
     assert "canonical db memex" in written
     assert written.startswith("# MEMEX [")  # fill indicator header
@@ -225,17 +230,66 @@ def test_sync_memex_normalizes_headered_canonical_db_row(
         previous_artifact_content=None,
     )
 
+    assert result == {
+        "ok": True,
+        "updated": False,
+        "source": "db",
+        "artifact_written": True,
+    }
+    active = db.get_memex(user_id)
+    assert active is not None
+    assert active["id"] == old_id
+    assert active["content"] == "canonical body"
+    written = memex_path.read_text(encoding="utf-8")
+    assert written.startswith("# MEMEX [")
+    assert pi_synthesis._strip_memex_header(written).strip() == active["content"]
+
+
+def test_sync_memex_versions_headered_in_place_db_mutation_and_passes_gate(
+    db,
+    user_id: str,
+    tmp_path: Path,
+) -> None:
+    memex_path = tmp_path / "MEMEX.md"
+    old_id = update_memex(db, user_id, "old canonical memex")
+    old_row = _memory_row(db, user_id, old_id)
+    assert old_row is not None
+    baseline = capture_baseline(db, user_id)
+    candidate = "# MEMEX [20 / 2,000 tokens · 1%]\n\nnew canonical memex"
+    db.conn.execute(
+        "UPDATE memories SET content = ?, updated_at = ? WHERE user_id = ? AND id = ?",
+        (candidate, "2026-01-01T00:00:00+00:00", user_id, old_id),
+    )
+    db.conn.commit()
+
+    result = pi_synthesis._sync_memex_to_db(
+        db,
+        user_id,
+        previous_content="old canonical memex",
+        previous_id=old_id,
+        previous_updated_at=old_row["updated_at"],
+        previous_artifact_content=None,
+        memex_path=memex_path,
+    )
+
     assert result["ok"] is True
+    assert result["updated"] is True
+    assert result["source"] == "db"
+    assert result["normalized_in_place"] is True
     active = db.get_memex(user_id)
     assert active is not None
     assert active["id"] != old_id
-    assert active["content"] == "canonical body"
-    old_row = _memory_row(db, user_id, old_id)
-    assert old_row is not None
-    assert old_row["active"] == 0
+    assert active["content"] == "new canonical memex"
+    old = _memory_row(db, user_id, old_id)
+    assert old is not None
+    assert old["active"] == 0
+    assert old["content"] == "old canonical memex"
+    assert old["updated_at"] == old_row["updated_at"]
+    assert old["superseded_by"] == active["id"]
+    gate = validate_state_after_cycle(db, user_id, baseline)
+    assert gate["valid"] is True
     written = memex_path.read_text(encoding="utf-8")
-    assert written.startswith("# MEMEX [")
-    assert pi_synthesis._strip_memex_header(written).strip() == "canonical body"
+    assert pi_synthesis._strip_memex_header(written).strip() == active["content"]
 
 
 def test_sync_memex_versions_in_place_db_mutation(

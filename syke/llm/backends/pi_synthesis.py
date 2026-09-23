@@ -328,13 +328,24 @@ def _normalize_current_memex_projection_header(
     db: SykeDB,
     user_id: str,
     memex: dict[str, object] | None,
+    *,
+    defer_version_for_id: str | None = None,
 ) -> dict[str, object] | None:
     content = _memex_content(memex)
-    if content is None or _strip_memex_header(content) == content:
+    if content is None:
         return memex
+    canonical_content = _strip_memex_header(content)
+    if canonical_content == content:
+        return memex
+    if defer_version_for_id and memex and str(memex.get("id")) == defer_version_for_id:
+        # Let _sync_memex_to_db reconcile a direct edit against its pre-cycle
+        # row before update_memex creates the new version.
+        normalized = dict(memex)
+        normalized["content"] = canonical_content
+        return normalized
     from syke.memory.memex import update_memex
 
-    update_memex(db, user_id, _strip_memex_header(content))
+    update_memex(db, user_id, canonical_content)
     return _current_memex_row(db, user_id)
 
 
@@ -388,37 +399,52 @@ def _sync_memex_to_db(
 
     from syke.memory.memex import update_memex
 
+    previous_canonical_content = (
+        _strip_memex_header(previous_content) if previous_content is not None else None
+    )
+    raw_current_memex = _current_memex_row(db, user_id)
+    raw_current_content = _memex_content(raw_current_memex)
     current_memex = _normalize_current_memex_projection_header(
         db,
         user_id,
-        _current_memex_row(db, user_id),
+        raw_current_memex,
+        defer_version_for_id=previous_id,
     )
     current_content = _memex_content(current_memex)
     current_id = str(current_memex.get("id")) if current_memex and current_memex.get("id") else None
     artifact_content = _read_memex_artifact(memex_path)
-    db_changed_during_cycle = current_content != previous_content
+    # Compare the DB as it was written by the agent so a display-only header
+    # still follows the existing DB-wins precedence rule.
+    db_changed_during_cycle = raw_current_content != previous_content
+    header_needs_cleanup = (
+        raw_current_content is not None
+        and current_content is not None
+        and raw_current_content != current_content
+        and current_id == previous_id
+    )
     artifact_changed_during_cycle = artifact_content != previous_artifact_content
 
-    if db_changed_during_cycle and current_content is not None:
+    if (db_changed_during_cycle or header_needs_cleanup) and current_content is not None:
         canonical_content = current_content
         result["source"] = "db"
         if previous_id and current_id == previous_id and previous_content is not None:
-            # Agents can mutate the active MEMEX row directly. Convert that
-            # in-place edit into a real supersession so history/projection
-            # invariants do not depend on trusting the agent's claim.
+            # Restore the pre-cycle row before versioning a direct edit. Header
+            # normalization above is deferred for this same-row case so the
+            # candidate content is not versioned before this restoration.
             db.conn.execute(
                 """UPDATE memories
                    SET content = ?, updated_at = ?
                    WHERE user_id = ? AND id = ?""",
-                (previous_content, previous_updated_at, user_id, previous_id),
+                (previous_canonical_content, previous_updated_at, user_id, previous_id),
             )
-            update_memex(db, user_id, canonical_content)
-            result["normalized_in_place"] = True
-            current_memex = _current_memex_row(db, user_id)
-            current_content = _memex_content(current_memex)
-            if current_content is None:
-                logger.error("In-place memex normalization left canonical memex missing")
-                return result
+            if current_content != previous_canonical_content:
+                update_memex(db, user_id, current_content)
+                result["normalized_in_place"] = True
+                current_memex = _current_memex_row(db, user_id)
+                current_content = _memex_content(current_memex)
+                if current_content is None:
+                    logger.error("In-place memex normalization left canonical memex missing")
+                    return result
             canonical_content = current_content
     elif artifact_content is not None and artifact_changed_during_cycle:
         canonical_content = _strip_memex_header(artifact_content)
@@ -439,8 +465,8 @@ def _sync_memex_to_db(
     elif current_content is not None:
         canonical_content = current_content
         result["source"] = "db"
-    elif previous_content is not None:
-        canonical_content = previous_content
+    elif previous_canonical_content is not None:
+        canonical_content = previous_canonical_content
         result["source"] = "previous"
         try:
             update_memex(db, user_id, canonical_content)
@@ -480,7 +506,7 @@ def _sync_memex_to_db(
             logger.error("Projected MEMEX.md does not match canonical memex content")
             result["source"] = "artifact_mismatch"
             return result
-        result["updated"] = canonical_content != previous_content
+        result["updated"] = canonical_content != previous_canonical_content
         if result["updated"] and previous_id:
             active_memex = _current_memex_row(db, user_id)
             active_id = (
