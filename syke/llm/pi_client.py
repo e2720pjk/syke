@@ -691,7 +691,7 @@ def resolve_pi_provider(model_override: str | None = None) -> str | None:
 
 
 PI_PACKAGE = "@earendil-works/pi-coding-agent"
-PI_PACKAGE_VERSION = "0.84.1"
+PI_PACKAGE_VERSION = "0.87.1"
 PI_LOCAL_PREFIX = Path.home() / ".syke" / "pi"
 PI_BIN = Path.home() / ".syke" / "bin" / "pi"
 PI_NODE_BIN = Path.home() / ".syke" / "bin" / "node"

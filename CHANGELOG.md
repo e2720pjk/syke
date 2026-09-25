@@ -23,8 +23,9 @@ All notable changes to Syke are documented here.
 - Adapter bootstrap now upgrades untouched known seed revisions without
   overwriting user-customized adapter files; customized files receive a manual
   repair hint.
-- Upgraded the managed Pi runtime to `@earendil-works/pi-coding-agent@0.84.1`,
-  exposing the GPT-5.6 model series and `max` thinking level.
+- Upgraded the managed Pi runtime to `@earendil-works/pi-coding-agent@0.87.1`,
+  adding GPT-6 Astra/Luna/Sol and Claude Opus 5.5 to Pi's provider catalog; `max`
+  thinking-level pass-through remains supported.
 - Added external Pi session history ingestion from
   `~/.pi/agent/sessions/**/*.jsonl` with an adapter and sandbox allowlist;
   Syke-owned runtime sessions remain excluded.

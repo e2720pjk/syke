@@ -10,7 +10,7 @@ Pick a provider you already trust, activate it, then confirm the resolved runtim
 
 ```bash
 syke auth login openai-codex --use
-syke auth set openai-codex --model gpt-5.6-luna --use
+syke auth set openai-codex --model gpt-6-luna --use
 syke auth status
 ```
 
@@ -52,7 +52,7 @@ Important:
 | Pi-native OAuth provider | `syke auth login openai-codex --use` | Uses Pi's native login flow and stores the result in `~/.syke/pi-agent/auth.json`. |
 | Custom OpenAI-compatible provider | `syke auth set localproxy --base-url URL --model MODEL --use` | For self-hosted or local OpenAI-compatible endpoints that are not in Pi's built-in catalog. |
 
-Syke does not ship its own provider registry anymore. The available built-in providers and models come from Pi's live catalog. With the managed Pi runtime (0.84.1), the `openai-codex` catalog includes the GPT-5.6 series (`gpt-5.6-luna`, `gpt-5.6-sol`, and `gpt-5.6-terra` when advertised by Pi).
+Syke does not ship its own provider registry anymore. The available built-in providers and models come from Pi's catalog. With the managed Pi runtime (0.87.1), Pi includes GPT-6 Astra/Luna/Sol for OpenAI, OpenAI Codex, and GitHub Copilot, plus Claude Opus 5.5 for Anthropic; model availability still depends on provider authentication.
 
 Set maximum reasoning for synthesis in `~/.syke/config.toml`:
 
@@ -110,10 +110,10 @@ syke auth set openai --api-key <key> --model gpt-5.4 --use
 
 ```bash
 syke auth login openai-codex --use
-syke auth set openai-codex --model gpt-5.6-luna --use
+syke auth set openai-codex --model gpt-6-luna --use
 ```
 
-The interactive `syke auth` model menu is populated from Pi's live catalog, so it shows the GPT-5.6 entries after the managed runtime has been upgraded.
+The interactive `syke auth` model menu is populated from Pi's catalog, so it includes the models supported by the installed managed runtime.
 
 ### Other Supported Providers
 
