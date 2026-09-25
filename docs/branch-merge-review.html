@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenCode 2.0 × Pi 分支合併評估</title>
+  <style>
+    :root {
+      --paper: #f4f0e8;
+      --paper-deep: #e9e2d6;
+      --ink: #18231f;
+      --muted: #66706b;
+      --line: #cfc7ba;
+      --orange: #c75b2b;
+      --orange-soft: #f3d7c5;
+      --blue: #2d6872;
+      --blue-soft: #cfe4e4;
+      --green: #567b55;
+      --green-soft: #d9e5d3;
+      --red: #9d453e;
+      --red-soft: #efd1cc;
+      --gold: #9b752b;
+      --serif: Georgia, "Noto Serif TC", "Songti SC", serif;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: var(--sans);
+    }
+
+    .page { max-width: 1320px; margin: 0 auto; padding: 30px 34px 70px; }
+    .eyebrow {
+      color: var(--orange);
+      font: 700 12px/1 var(--mono);
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      max-width: 920px;
+      margin: 18px 0 14px;
+      font: 500 clamp(38px, 6vw, 82px)/.98 var(--serif);
+      letter-spacing: -.045em;
+    }
+    .lede {
+      max-width: 760px;
+      color: var(--muted);
+      font: 17px/1.65 var(--serif);
+    }
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin: 24px 0 30px;
+    }
+    .meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.32);
+      font-size: 12px;
+    }
+    .meta strong { font-family: var(--mono); font-size: 11px; }
+
+    .verdict {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 22px;
+      padding: 20px 22px;
+      margin: 0 0 22px;
+      border: 1px solid #b4c6ae;
+      background: var(--green-soft);
+    }
+    .verdict h2 { margin: 0 0 5px; font: 600 25px/1.1 var(--serif); }
+    .verdict p { margin: 0; color: #315132; line-height: 1.55; }
+    .verdict-mark {
+      display: grid;
+      place-items: center;
+      width: 108px;
+      height: 72px;
+      border-left: 1px solid #a9bea1;
+      color: var(--green);
+      font: 700 14px/1.15 var(--mono);
+      text-align: center;
+      text-transform: uppercase;
+    }
+
+    .chart-frame {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: #ebe5da;
+      box-shadow: 0 14px 30px rgba(34, 37, 31, .08);
+    }
+    .chart-frame svg { display: block; width: 100%; height: auto; }
+    .chart-caption {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 11px 15px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .chart-caption code, code { font-family: var(--mono); font-size: .92em; }
+
+    .section { margin-top: 58px; }
+    .section-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 20px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 10px;
+      margin-bottom: 18px;
+    }
+    .section-heading h2 { margin: 0; font: 500 32px/1.1 var(--serif); letter-spacing: -.03em; }
+    .section-heading span { color: var(--muted); font: 11px var(--mono); }
+
+    .scope-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .scope-card {
+      min-height: 250px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.32);
+    }
+    .scope-card.oc { border-top: 5px solid var(--orange); }
+    .scope-card.pi { border-top: 5px solid var(--blue); }
+    .scope-card h3 { margin: 0 0 15px; font: 600 24px/1.1 var(--serif); }
+    .scope-card .small { color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .scope-list { display: grid; gap: 9px; margin: 16px 0 0; }
+    .scope-line { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 13px; line-height: 1.45; }
+    .tag {
+      display: inline-block;
+      width: fit-content;
+      padding: 3px 6px;
+      font: 700 10px var(--mono);
+      letter-spacing: .05em;
+    }
+    .tag.keep { color: #315132; background: var(--green-soft); }
+    .tag.split { color: #77561d; background: #f1e5bf; }
+    .tag.trim { color: #793933; background: var(--red-soft); }
+
+    .conflict-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 16px; align-items: stretch; }
+    .conflict-note {
+      padding: 19px 20px;
+      border: 1px solid #d7b1a7;
+      background: var(--red-soft);
+    }
+    .conflict-note h3 { margin: 0 0 9px; font: 600 22px var(--serif); }
+    .conflict-note p { margin: 0; color: #663a35; font-size: 13px; line-height: 1.55; }
+    .file-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 15px; }
+    .file-chip { padding: 6px 8px; background: rgba(255,255,255,.55); font: 11px var(--mono); }
+    .merge-table { width: 100%; border-collapse: collapse; font-size: 12px; background: rgba(255,255,255,.32); border: 1px solid var(--line); }
+    .merge-table th, .merge-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; line-height: 1.45; }
+    .merge-table th { color: var(--muted); font: 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .merge-table tr:last-child td { border-bottom: 0; }
+    .merge-table code { white-space: nowrap; }
+
+    .sequence { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; counter-reset: phase; }
+    .phase {
+      position: relative;
+      min-height: 180px;
+      padding: 18px 15px 15px;
+      border-top: 1px solid var(--ink);
+      border-bottom: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+      background: rgba(255,255,255,.22);
+    }
+    .phase:last-child { border-right: 1px solid var(--line); }
+    .phase::before { counter-increment: phase; content: "0" counter(phase); display: block; color: var(--orange); font: 700 11px var(--mono); margin-bottom: 25px; }
+    .phase h3 { margin: 0 0 7px; font: 600 19px/1.05 var(--serif); }
+    .phase p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .phase em { display: block; margin-top: 12px; color: var(--ink); font: 10px var(--mono); font-style: normal; }
+
+    .test-band {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      margin-top: 16px;
+      background: var(--line);
+      border: 1px solid var(--line);
+    }
+    .test-card { padding: 18px; background: var(--paper); }
+    .test-card strong { display: block; font: 500 31px var(--serif); }
+    .test-card span { color: var(--muted); font-size: 12px; }
+
+    .flags { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .flag { padding: 17px 18px; border: 1px solid #d9b5a9; background: #f7e7e1; }
+    .flag h3 { margin: 0 0 7px; color: var(--red); font: 600 18px var(--serif); }
+    .flag p { margin: 0; color: #663a35; font-size: 12px; line-height: 1.55; }
+    .flag code { color: #5d302c; }
+
+    details { margin-top: 19px; border-top: 1px solid var(--line); }
+    summary { cursor: pointer; padding: 14px 0; color: var(--ink); font: 600 15px var(--serif); }
+    pre { overflow: auto; margin: 0 0 16px; padding: 15px; background: #202a27; color: #e5eee7; font: 11px/1.65 var(--mono); }
+    .foot { margin-top: 58px; padding-top: 15px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.6; }
+
+    @media (max-width: 900px) {
+      .page { padding: 24px 18px 55px; }
+      .scope-grid, .conflict-layout, .flags { grid-template-columns: 1fr; }
+      .sequence { grid-template-columns: 1fr; }
+      .phase { min-height: 0; border-right: 1px solid var(--line); border-bottom: 0; }
+      .phase:last-child { border-bottom: 1px solid var(--line); }
+      .phase::before { margin-bottom: 10px; }
+    }
+    @media (max-width: 560px) {
+      .verdict { grid-template-columns: 1fr; }
+      .verdict-mark { width: auto; height: auto; padding-top: 12px; border-top: 1px solid #a9bea1; border-left: 0; }
+      .chart-caption { display: block; }
+      .chart-caption span { display: block; margin-top: 5px; }
+      .test-band { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div class="eyebrow">Branch integration review · 2026-08-31</div>
+      <h1>OpenCode 2.0 × Pi<br>合併地圖</h1>
+      <p class="lede">把兩條「各自正確」的路線接回同一條主幹。橘色是 OpenCode 2.0，藍色是 Pi；中間的紅色不是程式壞掉，而是兩邊碰到同一份文件或同一段排序邏輯。</p>
+      <div class="meta-row">
+        <span class="meta">共同祖先 <strong>d74aa6d</strong></span>
+        <span class="meta">目前分支 <strong>d4923e9</strong></span>
+        <span class="meta">Pi 分支 <strong>119ee6d</strong></span>
+        <span class="meta">working tree <strong>4 files · unstaged</strong></span>
+      </div>
+    </header>
+
+    <section class="verdict" aria-label="結論">
+      <div>
+        <h2>結論：可以合併，但要做「語意合併」</h2>
+        <p>先合併兩個 committed tip，再手動帶回 dirty 的 OpenCode 強化；不要把 dirty branch 直接 merge。5 個衝突大多是文件格式，真正的程式衝突只有 setup inventory 的同一個排序點。</p>
+      </div>
+      <div class="verdict-mark">GO<br>WITH<br>GATES</div>
+    </section>
+
+    <section class="chart-frame" aria-label="兩個分支合併流程圖">
+      <svg viewBox="0 0 1240 540" role="img" aria-labelledby="flow-title flow-desc">
+        <title id="flow-title">從共同祖先到合併驗證的分支流程</title>
+        <desc id="flow-desc">共同祖先 d74aa6d 分成 OpenCode 2.0 和 Pi 兩條路，在 semantic merge 匯合，通過五個衝突檢查與測試門。</desc>
+        <defs>
+          <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+            <path d="M32 0H0V32" fill="none" stroke="#d7cfc2" stroke-width="1" opacity=".48"/>
+          </pattern>
+          <marker id="arrow-ink" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10Z" fill="#66706b"/>
+          </marker>
+          <marker id="arrow-orange" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10Z" fill="#c75b2b"/>
+          </marker>
+          <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10Z" fill="#2d6872"/>
+          </marker>
+        </defs>
+        <rect width="1240" height="540" fill="#ebe5da"/>
+        <rect width="1240" height="540" fill="url(#grid)"/>
+        <text x="54" y="52" fill="#66706b" font-family="SFMono-Regular,Consolas,monospace" font-size="12" letter-spacing="2">ONE BASE · TWO PURPOSES · ONE INTEGRATION</text>
+
+        <path d="M210 272H294" fill="none" stroke="#66706b" stroke-width="5" marker-end="url(#arrow-ink)"/>
+        <path d="M294 272C350 272 353 145 424 145H540" fill="none" stroke="#c75b2b" stroke-width="7" marker-end="url(#arrow-orange)"/>
+        <path d="M294 272C350 272 353 398 424 398H540" fill="none" stroke="#2d6872" stroke-width="7" marker-end="url(#arrow-blue)"/>
+        <path d="M540 145H682C730 145 750 222 804 247" fill="none" stroke="#c75b2b" stroke-width="7" marker-end="url(#arrow-orange)"/>
+        <path d="M540 398H682C730 398 750 319 804 293" fill="none" stroke="#2d6872" stroke-width="7" marker-end="url(#arrow-blue)"/>
+        <path d="M890 270H1001" fill="none" stroke="#9d453e" stroke-width="7" marker-end="url(#arrow-ink)"/>
+        <path d="M1080 270H1170" fill="none" stroke="#567b55" stroke-width="7" marker-end="url(#arrow-ink)"/>
+
+        <circle cx="142" cy="272" r="68" fill="#18231f"/>
+        <text x="142" y="263" fill="#f4f0e8" text-anchor="middle" font-family="Georgia,serif" font-size="18">共同祖先</text>
+        <text x="142" y="289" fill="#cfe4e4" text-anchor="middle" font-family="SFMono-Regular,Consolas,monospace" font-size="16">d74aa6d</text>
+
+        <rect x="424" y="86" width="190" height="118" rx="2" fill="#f3d7c5" stroke="#c75b2b" stroke-width="2"/>
+        <text x="443" y="119" fill="#8e3f1f" font-family="SFMono-Regular,Consolas,monospace" font-size="12" letter-spacing="1">CURRENT BRANCH</text>
+        <text x="443" y="151" fill="#18231f" font-family="Georgia,serif" font-size="24">OpenCode 2.0</text>
+        <text x="443" y="177" fill="#66706b" font-family="SFMono-Regular,Consolas,monospace" font-size="12">SQLite v2 · LLM-first</text>
+
+        <rect x="424" y="339" width="190" height="118" rx="2" fill="#cfe4e4" stroke="#2d6872" stroke-width="2"/>
+        <text x="443" y="372" fill="#21545d" font-family="SFMono-Regular,Consolas,monospace" font-size="12" letter-spacing="1">FEATURE BRANCH</text>
+        <text x="443" y="404" fill="#18231f" font-family="Georgia,serif" font-size="24">Pi</text>
+        <text x="443" y="430" fill="#66706b" font-family="SFMono-Regular,Consolas,monospace" font-size="12">sessions · GPT-5.6 · max</text>
+
+        <circle cx="847" cy="270" r="45" fill="#18231f"/>
+        <text x="847" y="264" fill="#f4f0e8" text-anchor="middle" font-family="Georgia,serif" font-size="16">語意</text>
+        <text x="847" y="285" fill="#f3d7c5" text-anchor="middle" font-family="Georgia,serif" font-size="16">合併</text>
+
+        <rect x="1001" y="213" width="79" height="114" rx="2" fill="#efd1cc" stroke="#9d453e" stroke-width="2"/>
+        <text x="1040" y="247" fill="#793933" text-anchor="middle" font-family="SFMono-Regular,Consolas,monospace" font-size="11">5 FILES</text>
+        <text x="1040" y="279" fill="#9d453e" text-anchor="middle" font-family="Georgia,serif" font-size="31">!</text>
+        <text x="1040" y="304" fill="#793933" text-anchor="middle" font-family="SFMono-Regular,Consolas,monospace" font-size="10">resolve</text>
+
+        <rect x="1170" y="213" width="54" height="114" rx="2" fill="#d9e5d3" stroke="#567b55" stroke-width="2"/>
+        <path d="M1184 270l11 12 23-29" fill="none" stroke="#567b55" stroke-width="6"/>
+        <text x="1197" y="309" fill="#315132" text-anchor="middle" font-family="SFMono-Regular,Consolas,monospace" font-size="10">TEST</text>
+
+        <text x="302" y="232" fill="#66706b" font-family="SFMono-Regular,Consolas,monospace" font-size="11">split by need</text>
+        <text x="913" y="248" fill="#9d453e" font-family="SFMono-Regular,Consolas,monospace" font-size="11">same files</text>
+        <text x="1090" y="248" fill="#567b55" font-family="SFMono-Regular,Consolas,monospace" font-size="11">558 / 13</text>
+        <text x="54" y="498" fill="#66706b" font-family="SFMono-Regular,Consolas,monospace" font-size="11">The merge target is a clean integration commit; the four unstaged files are carried across deliberately.</text>
+      </svg>
+      <div class="chart-caption"><span>看圖方式：先看兩條線各自完成什麼，再看它們在哪裡共享檔案。</span><span><code>558 passed · 13 skipped · ruff clean</code>（暫存整合版）</span></div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading"><h2>1 / 變更範圍：什麼留下？</h2><span>MINIMUM VIABLE MERGE</span></div>
+      <div class="scope-grid">
+        <article class="scope-card oc">
+          <h3>OpenCode 2.0</h3>
+          <p class="small">核心問題：讓 LLM 能安全讀懂 legacy、v2、mixed SQLite，而不是新增 Python ingestion parser。</p>
+          <div class="scope-list">
+            <div class="scope-line"><span class="tag keep">KEEP</span><span><code>adapter-opencode.md</code> 的 schema detection、bounded JSON1 欄位抽取、tool error、message-ID merge。</span></div>
+            <div class="scope-line"><span class="tag keep">KEEP</span><span><code>catalog.py</code> 的 <code>opencode*.db</code> 與 WAL/SHM 排除，以及 4 個 OpenCode contract tests。</span></div>
+            <div class="scope-line"><span class="tag split">RETAIN</span><span>seed hash upgrade / customized adapter 保護：不是 schema 本身，但可避免升級覆蓋使用者修改。</span></div>
+            <div class="scope-line"><span class="tag trim">TRIM</span><span>CHANGELOG、README、table 對齊與 code-fence reflow；只保留必要的新說明。</span></div>
+          </div>
+        </article>
+        <article class="scope-card pi">
+          <h3>Pi session + GPT-5.6</h3>
+          <p class="small">核心問題：讀外部 Pi JSONL，並讓 managed Pi runtime 能啟動 GPT-5.6 與 <code>max</code>。</p>
+          <div class="scope-list">
+            <div class="scope-line"><span class="tag keep">KEEP</span><span>Pi catalog、adapter、sandbox allowlist/exclusion、workspace source selection。</span></div>
+            <div class="scope-line"><span class="tag keep">KEEP</span><span>新 package/API、0.84.1 pin、Node 22.19 guard、<code>max</code> model validation。</span></div>
+            <div class="scope-line"><span class="tag split">RETAIN</span><span>direct ask / first-run 初始化：它確保 <code>adapters/pi.md</code> 真正進入 prompt。</span></div>
+            <div class="scope-line"><span class="tag trim">TRIM</span><span>大範圍文件格式化、Pyright suppressions、與需求無關的泛型 hardening 可拆後續 commit。</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading"><h2>2 / 衝突不是同一種衝突</h2><span>WHY FIVE FILES?</span></div>
+      <div class="conflict-layout">
+        <div class="chart-frame">
+          <svg viewBox="0 0 760 385" role="img" aria-label="衝突分類圖">
+            <rect width="760" height="385" fill="#ebe5da"/>
+            <path d="M380 56V328M90 192H670" stroke="#cfc7ba" stroke-width="1"/>
+            <circle cx="380" cy="192" r="42" fill="#18231f"/>
+            <text x="380" y="186" fill="#f4f0e8" text-anchor="middle" font-family="Georgia,serif" font-size="16">同一份</text>
+            <text x="380" y="207" fill="#f3d7c5" text-anchor="middle" font-family="Georgia,serif" font-size="16">檔案</text>
+            <rect x="37" y="82" width="195" height="73" fill="#f3d7c5" stroke="#c75b2b"/>
+            <text x="54" y="111" fill="#8e3f1f" font-family="SFMono-Regular,Consolas,monospace" font-size="11">DOCUMENT INTENT</text>
+            <text x="54" y="135" fill="#18231f" font-family="Georgia,serif" font-size="18">OpenCode 說明</text>
+            <text x="54" y="151" fill="#66706b" font-family="SFMono-Regular,Consolas,monospace" font-size="10">Pi 說明 + formatting</text>
+            <path d="M232 118H337" stroke="#c75b2b" stroke-width="3" marker-end="url(#arrow-orange)"/>
+            <rect x="528" y="82" width="195" height="73" fill="#cfe4e4" stroke="#2d6872"/>
+            <text x="545" y="111" fill="#21545d" font-family="SFMono-Regular,Consolas,monospace" font-size="11">DOCUMENT UNION</text>
+            <text x="545" y="135" fill="#18231f" font-family="Georgia,serif" font-size="18">保留兩邊語意</text>
+            <text x="545" y="151" fill="#66706b" font-family="SFMono-Regular,Consolas,monospace" font-size="10">刪除 reflow 雜訊</text>
+            <path d="M423 118H528" stroke="#2d6872" stroke-width="3" marker-end="url(#arrow-blue)"/>
+            <rect x="37" y="230" width="195" height="73" fill="#f3d7c5" stroke="#c75b2b"/>
+            <text x="54" y="259" fill="#8e3f1f" font-family="SFMono-Regular,Consolas,monospace" font-size="11">CODE INTENT</text>
+            <text x="54" y="283" fill="#18231f" font-family="Georgia,serif" font-size="18">OpenCode repair hint</text>
+            <text x="54" y="299" fill="#66706b" font-family="SFMono-Regular,Consolas,monospace" font-size="10">Pi discovery iterator</text>
+            <path d="M232 267H337" stroke="#c75b2b" stroke-width="3" marker-end="url(#arrow-orange)"/>
+            <rect x="528" y="230" width="195" height="73" fill="#d9e5d3" stroke="#567b55"/>
+            <text x="545" y="259" fill="#315132" font-family="SFMono-Regular,Consolas,monospace" font-size="11">CODE UNION</text>
+            <text x="545" y="283" fill="#18231f" font-family="Georgia,serif" font-size="18">兩者都保留</text>
+            <text x="545" y="299" fill="#66706b" font-family="SFMono-Regular,Consolas,monospace" font-size="10">同一個 sort key 手選</text>
+            <path d="M423 267H528" stroke="#567b55" stroke-width="3" marker-end="url(#arrow-ink)"/>
+            <text x="380" y="28" fill="#66706b" text-anchor="middle" font-family="SFMono-Regular,Consolas,monospace" font-size="11" letter-spacing="1">MOST CONFLICTS ARE MARKDOWN WIDTH / HISTORY STYLE</text>
+            <text x="380" y="360" fill="#9d453e" text-anchor="middle" font-family="SFMono-Regular,Consolas,monospace" font-size="11">ONLY setup_support.py NEEDS CODE-LEVEL JUDGMENT</text>
+          </svg>
+        </div>
+        <div>
+          <table class="merge-table">
+            <thead><tr><th>檔案</th><th>原因</th><th>合併判斷</th></tr></thead>
+            <tbody>
+              <tr><td><code>README.md</code><br><code>PLATFORMS.md</code></td><td>兩邊都更新 supported harness 表。</td><td>合併 Pi row + OpenCode 詳細 row。</td></tr>
+              <tr><td><code>CHANGELOG.md</code></td><td>Unreleased 都有新功能；歷史段落另有格式重排。</td><td>合併兩組 bullet，丟掉歷史 reflow。</td></tr>
+              <tr><td><code>docs/CONFIG_REFERENCE.md</code></td><td>OpenCode 頂部說明 vs Pi 的 <code>max</code> 說明，加上 table 對齊差異。</td><td>保留 OpenCode section，補 <code>max</code>。</td></tr>
+              <tr><td><code>setup_support.py</code></td><td>同一個 source sort：一邊 cast，一邊換 catalog iterator。</td><td>保留 Pi iterator/helper，再保留 OpenCode repair payload。</td></tr>
+            </tbody>
+          </table>
+          <div class="conflict-note" style="margin-top:16px">
+            <h3>dirty 測試要手搬</h3>
+            <p><code>tests/test_pi_synthesis_contract.py</code> 已被 Pi commit 修改。請保留 Pi 版 <code>lambda **_kwargs</code>，再只帶回目前 dirty 的 OpenCode first-run test；不要整檔套 patch。</p>
+            <div class="file-chips"><span class="file-chip">4 unstaged files</span><span class="file-chip">0 staged files</span><span class="file-chip">40 targeted pass</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading"><h2>3 / 最小安全合併順序</h2><span>DO THIS IN A TEMP WORKTREE</span></div>
+      <div class="sequence">
+        <article class="phase"><h3>保存 dirty</h3><p>把四個未 staged 檔案存成 patch；原工作樹不動。</p><em>bootstrap · seed · 2 tests</em></article>
+        <article class="phase"><h3>先合 committed</h3><p>用 clean integration worktree 合併 <code>d4923e9</code> 與 <code>119ee6d</code>。</p><em>5 conflicts expected</em></article>
+        <article class="phase"><h3>按語意解衝突</h3><p>文件做 union；程式只合併兩個必要行為，不接受格式噪音。</p><em>catalog + setup sort</em></article>
+        <article class="phase"><h3>手動帶回 dirty</h3><p>adapter v2 欄位抽取與 regression tests 帶回；Pi test 同名區塊重排。</p><em>no blind git apply</em></article>
+        <article class="phase"><h3>驗證後再正式合</h3><p>跑完整 suite、Ruff，再做雙來源 setup/sync smoke。</p><em>uv run syke</em></article>
+      </div>
+      <details>
+        <summary>可複製的暫存 integration skeleton</summary>
+        <pre>git diff --binary &gt; /tmp/opencode-v2-support.patch
+git worktree add ../opencode-v2-pi-test -b test/opencode-v2-pi HEAD
+cd ../opencode-v2-pi-test
+git apply /tmp/opencode-v2-support.patch
+
+# 先 commit 兩個 branch 的 clean merge；再手動帶回
+# adapter-opencode.md、bootstrap hash、兩組 targeted tests。
+uv run python -m pytest -q
+uv run ruff check .
+uv run syke setup --agent --skip-daemon --source opencode --source pi
+uv run syke sync --source opencode --source pi</pre>
+      </details>
+    </section>
+
+    <section class="section">
+      <div class="section-heading"><h2>4 / 驗證結果</h2><span>OBSERVED, NOT ASSUMED</span></div>
+      <div class="test-band">
+        <div class="test-card"><strong>554 + 10</strong><span>目前 dirty 分支：passed / skipped</span></div>
+        <div class="test-card"><strong>139 + 3</strong><span>Pi 分支受影響 suite：passed / skipped</span></div>
+        <div class="test-card"><strong>558 + 13</strong><span>5 個衝突解法後的 committed integration：passed / skipped</span></div>
+      </div>
+      <p class="lede" style="margin-top:15px; font-size:14px">三個結果的意義很簡單：兩個 feature 各自可測、乾淨合併版也可測；尚待最後一步是把你目前 dirty 的 OpenCode field-level patch 以人工方式接到已驗證的整合版。</p>
+    </section>
+
+    <section class="section">
+      <div class="section-heading"><h2>5 / Release 前兩個 review flags</h2><span>SMALL, ACTIONABLE FOLLOW-UPS</span></div>
+      <div class="flags">
+        <article class="flag">
+          <h3>P2 · package version enforcement</h3>
+          <p><code>ensure_pi_binary()</code> 把 missing/invalid <code>package.json</code> 視為 <code>current</code>。若「一定要 0.84.1」是硬需求，應改為只有 exact <code>0.84.1</code> 才跳過 reinstall，並調整既有 fixture。</p>
+        </article>
+        <article class="flag">
+          <h3>P2 · custom replay exclusion</h3>
+          <p><code>_pi_excluded_paths(home=...)</code> 在傳入 explicit home 時不讀 <code>SYKE_WORKSPACE_ROOT</code>/<code>SYKE_PI_AGENT_DIR</code> override。若 replay/custom workspace 會與 home 分離，應補測試並統一排除路徑。</p>
+        </article>
+      </div>
+    </section>
+
+    <footer class="foot">
+      Review basis: common ancestor <code>d74aa6d</code>; current committed tip <code>d4923e9</code>; Pi tip <code>119ee6d</code>. Original worktree was kept unchanged during this review. The temporary resolved integration was used only for validation; this HTML report is a new untracked artifact.
+    </footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,1807 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="OpenCode 2.0 與 Pi session/GPT-5.6 分支的範圍審查與最小合併方案"
+    />
+    <title>Syke / Branch Merge Review v2</title>
+    <style>
+      :root {
+        --ink: #0b1017;
+        --ink-2: #111923;
+        --panel: #151f2b;
+        --panel-2: #1b2835;
+        --line: #314354;
+        --muted: #8fa2b3;
+        --paper: #eef5f4;
+        --white: #f8fbfa;
+        --cyan: #73d6d2;
+        --blue: #82a9ff;
+        --lime: #b7e36e;
+        --amber: #f2bf69;
+        --coral: #f08b82;
+        --violet: #c8a8ff;
+        --mono:
+          "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, monospace;
+        --sans:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        --serif: Georgia, "Times New Roman", serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+        background: var(--ink);
+      }
+      body {
+        margin: 0;
+        color: var(--white);
+        background:
+          linear-gradient(
+              90deg,
+              rgba(115, 214, 210, 0.035) 1px,
+              transparent 1px
+            )
+            0 0 / 48px 48px,
+          var(--ink);
+        font-family: var(--sans);
+        line-height: 1.5;
+      }
+      a {
+        color: inherit;
+      }
+      code,
+      pre,
+      .mono {
+        font-family: var(--mono);
+      }
+      code {
+        color: var(--cyan);
+      }
+      .shell {
+        max-width: 1440px;
+        margin: 0 auto;
+        padding: 28px 34px 80px;
+      }
+      .eyebrow {
+        color: var(--cyan);
+        font: 700 11px/1.2 var(--mono);
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      .topline {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        align-items: baseline;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 16px;
+      }
+      .topline .right {
+        color: var(--muted);
+        font: 12px var(--mono);
+        text-align: right;
+      }
+      .hero {
+        padding: 58px 0 34px;
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(520px, 1.35fr);
+        gap: 36px;
+        align-items: center;
+      }
+      h1 {
+        margin: 14px 0 18px;
+        max-width: 680px;
+        font: 700 clamp(42px, 6vw, 88px)/0.94 var(--serif);
+        letter-spacing: -0.055em;
+      }
+      .hero-lead {
+        max-width: 620px;
+        margin: 0;
+        color: #c5d3d8;
+        font-size: clamp(16px, 1.5vw, 21px);
+        line-height: 1.45;
+      }
+      .hero-stamp {
+        margin-top: 28px;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 11px 14px;
+        border: 1px solid var(--lime);
+        color: var(--lime);
+        font: 700 12px var(--mono);
+        letter-spacing: 0.04em;
+      }
+      .hero-stamp::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        background: var(--lime);
+        border-radius: 50%;
+        box-shadow: 0 0 0 4px rgba(183, 227, 110, 0.12);
+      }
+      .hero-art {
+        min-height: 370px;
+        border: 1px solid var(--line);
+        background: var(--ink-2);
+        overflow: hidden;
+        position: relative;
+      }
+      .hero-art::before {
+        content: "INTEGRATION MAP / 01";
+        position: absolute;
+        left: 18px;
+        top: 15px;
+        color: var(--muted);
+        font: 10px var(--mono);
+        letter-spacing: 0.14em;
+        z-index: 2;
+      }
+      svg {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .section {
+        margin-top: 76px;
+      }
+      .section-head {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 20px;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 12px;
+        margin-bottom: 20px;
+      }
+      h2 {
+        margin: 0;
+        font: 700 clamp(27px, 3vw, 45px)/1 var(--serif);
+        letter-spacing: -0.035em;
+      }
+      .section-index {
+        color: var(--muted);
+        font: 12px var(--mono);
+      }
+      .lede {
+        max-width: 760px;
+        color: #b7c8cf;
+        margin: 0 0 24px;
+        font-size: 16px;
+      }
+      .grid-2 {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        padding: 22px;
+      }
+      .card h3 {
+        margin: 0 0 9px;
+        font-size: 17px;
+        letter-spacing: -0.01em;
+      }
+      .card p {
+        color: #b6c6cc;
+        margin: 0;
+      }
+      .card .tag {
+        display: inline-block;
+        margin-bottom: 14px;
+        padding: 4px 7px;
+        font: 700 10px var(--mono);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        border: 1px solid currentColor;
+      }
+      .tag.core {
+        color: var(--cyan);
+      }
+      .tag.support {
+        color: var(--lime);
+      }
+      .tag.trim {
+        color: var(--amber);
+      }
+      .tag.block {
+        color: var(--coral);
+      }
+      .verdict {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        border: 1px solid var(--lime);
+        background: #17251d;
+      }
+      .verdict-main {
+        padding: 28px;
+      }
+      .verdict-main h3 {
+        font: 700 31px/1.05 var(--serif);
+        margin: 0 0 14px;
+        color: var(--lime);
+      }
+      .verdict-main p {
+        max-width: 660px;
+        color: #d6e4d4;
+        margin: 0;
+        font-size: 18px;
+      }
+      .verdict-side {
+        border-left: 1px solid rgba(183, 227, 110, 0.35);
+        padding: 28px;
+        display: grid;
+        align-content: center;
+        gap: 12px;
+      }
+      .verdict-side div {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        font: 12px var(--mono);
+        border-bottom: 1px solid rgba(183, 227, 110, 0.2);
+        padding-bottom: 9px;
+      }
+      .verdict-side span:last-child {
+        color: var(--lime);
+        text-align: right;
+      }
+      .scope-visual {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        padding: 8px;
+      }
+      .mini-note {
+        color: var(--muted);
+        font: 11px/1.5 var(--mono);
+      }
+      .scope-card {
+        min-height: 238px;
+        position: relative;
+        overflow: hidden;
+      }
+      .scope-card::after {
+        content: "";
+        position: absolute;
+        right: -26px;
+        bottom: -37px;
+        width: 150px;
+        height: 150px;
+        border: 1px solid currentColor;
+        opacity: 0.18;
+        transform: rotate(45deg);
+      }
+      .scope-card.opencode {
+        color: var(--blue);
+        border-top: 3px solid var(--blue);
+      }
+      .scope-card.pi {
+        color: var(--violet);
+        border-top: 3px solid var(--violet);
+      }
+      .scope-card p,
+      .scope-card li {
+        color: #c2d0d5;
+      }
+      .scope-card ul {
+        margin: 16px 0 0;
+        padding-left: 19px;
+      }
+      .scope-card li {
+        margin: 6px 0;
+      }
+      .scope-card strong {
+        color: var(--white);
+      }
+      .audit {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        overflow: hidden;
+      }
+      .audit-row {
+        display: grid;
+        grid-template-columns: 1.05fr 0.78fr 1.2fr;
+        gap: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .audit-row:last-child {
+        border-bottom: 0;
+      }
+      .audit-row > div {
+        padding: 16px 18px;
+        border-right: 1px solid var(--line);
+      }
+      .audit-row > div:last-child {
+        border-right: 0;
+      }
+      .audit-head {
+        background: var(--panel-2);
+        color: var(--muted);
+        font: 10px var(--mono);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .audit-file {
+        color: var(--white);
+        font: 13px var(--mono);
+        overflow-wrap: anywhere;
+      }
+      .audit-purpose {
+        color: #c6d2d6;
+        font-size: 14px;
+      }
+      .audit-status {
+        font: 700 11px var(--mono);
+        letter-spacing: 0.06em;
+      }
+      .audit-status.core {
+        color: var(--cyan);
+      }
+      .audit-status.support {
+        color: var(--lime);
+      }
+      .audit-status.trim {
+        color: var(--amber);
+      }
+      .audit-status.block {
+        color: var(--coral);
+      }
+      .conflict-wrap {
+        border: 1px solid var(--line);
+        background: #0e161f;
+        padding: 8px;
+      }
+      .conflict-list {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 15px;
+      }
+      .conflict-node {
+        min-height: 156px;
+        background: var(--panel);
+        border: 1px solid var(--coral);
+        padding: 14px;
+      }
+      .conflict-node .num {
+        color: var(--coral);
+        font: 700 20px var(--mono);
+      }
+      .conflict-node h3 {
+        margin: 10px 0 7px;
+        font: 700 14px var(--mono);
+        overflow-wrap: anywhere;
+      }
+      .conflict-node p {
+        margin: 0;
+        color: #b8c7cc;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .rule {
+        height: 1px;
+        background: var(--line);
+        margin: 24px 0;
+      }
+      .decision {
+        display: grid;
+        grid-template-columns: 70px 1fr;
+        gap: 16px;
+        align-items: start;
+        padding: 18px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .decision:last-child {
+        border-bottom: 0;
+      }
+      .decision .icon {
+        width: 52px;
+        height: 52px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--cyan);
+        color: var(--cyan);
+        font: 700 17px var(--mono);
+      }
+      .decision h3 {
+        margin: 0 0 5px;
+        font-size: 17px;
+      }
+      .decision p {
+        color: #b8c8ce;
+        margin: 0;
+      }
+      .decision.warn .icon {
+        border-color: var(--amber);
+        color: var(--amber);
+      }
+      .decision.stop .icon {
+        border-color: var(--coral);
+        color: var(--coral);
+      }
+      .plan {
+        position: relative;
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 0;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+      .plan::before {
+        content: "";
+        position: absolute;
+        left: 9%;
+        right: 9%;
+        top: 73px;
+        height: 2px;
+        background: var(--cyan);
+        opacity: 0.6;
+      }
+      .step {
+        min-height: 245px;
+        padding: 24px 17px 18px;
+        border-right: 1px solid var(--line);
+        position: relative;
+      }
+      .step:last-child {
+        border-right: 0;
+      }
+      .step .circle {
+        position: relative;
+        z-index: 1;
+        width: 30px;
+        height: 30px;
+        display: grid;
+        place-items: center;
+        border: 2px solid var(--cyan);
+        border-radius: 50%;
+        background: var(--panel);
+        color: var(--cyan);
+        font: 700 12px var(--mono);
+        margin: 34px 0 20px;
+      }
+      .step h3 {
+        margin: 0 0 8px;
+        font: 700 15px var(--mono);
+        color: var(--white);
+      }
+      .step p {
+        color: #b7c6cb;
+        font-size: 13px;
+        margin: 0;
+      }
+      .step code {
+        display: block;
+        margin-top: 13px;
+        color: var(--cyan);
+        font-size: 10px;
+        overflow-wrap: anywhere;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .terminal {
+        background: #080d12;
+        border: 1px solid #2c4651;
+        padding: 20px;
+        color: #d4e2de;
+        font-size: 12px;
+        line-height: 1.7;
+      }
+      .terminal .prompt {
+        color: var(--lime);
+      }
+      .terminal .comment {
+        color: #6f8491;
+      }
+      .gates {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .gate {
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+        padding: 18px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+      .gate-mark {
+        flex: 0 0 auto;
+        width: 28px;
+        height: 28px;
+        display: grid;
+        place-items: center;
+        border: 1px solid currentColor;
+        font: 700 13px var(--mono);
+      }
+      .gate.ok {
+        color: var(--lime);
+      }
+      .gate.fix {
+        color: var(--coral);
+      }
+      .gate.note {
+        color: var(--amber);
+      }
+      .gate h3 {
+        margin: 0 0 5px;
+        color: var(--white);
+        font-size: 15px;
+      }
+      .gate p {
+        margin: 0;
+        color: #b9c8cd;
+        font-size: 13px;
+      }
+      details {
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+      details + details {
+        margin-top: 10px;
+      }
+      summary {
+        cursor: pointer;
+        list-style: none;
+        padding: 15px 17px;
+        font: 700 12px var(--mono);
+        color: var(--cyan);
+      }
+      summary::-webkit-details-marker {
+        display: none;
+      }
+      summary::before {
+        content: "+";
+        display: inline-block;
+        width: 22px;
+        color: var(--amber);
+      }
+      details[open] summary::before {
+        content: "−";
+      }
+      details .detail-body {
+        border-top: 1px solid var(--line);
+        padding: 17px;
+        color: #becdd2;
+        font-size: 13px;
+      }
+      details ul {
+        margin: 7px 0 0;
+        padding-left: 19px;
+      }
+      details li {
+        margin: 7px 0;
+      }
+      .callout {
+        border-left: 4px solid var(--amber);
+        background: #211d14;
+        color: #ead8b4;
+        padding: 17px 19px;
+        margin: 18px 0;
+      }
+      .callout strong {
+        color: var(--amber);
+      }
+      .footer {
+        margin-top: 86px;
+        border-top: 1px solid var(--line);
+        padding-top: 18px;
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        color: var(--muted);
+        font: 11px var(--mono);
+      }
+      .footer strong {
+        color: var(--cyan);
+      }
+      @media (max-width: 1050px) {
+        .hero {
+          grid-template-columns: 1fr;
+        }
+        .hero-art {
+          min-height: 300px;
+        }
+        .conflict-list {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        .plan {
+          grid-template-columns: 1fr;
+        }
+        .plan::before {
+          left: 40px;
+          right: auto;
+          top: 56px;
+          bottom: 56px;
+          width: 2px;
+          height: auto;
+        }
+        .step {
+          min-height: 145px;
+          padding-left: 86px;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+        .step:last-child {
+          border-bottom: 0;
+        }
+        .step .circle {
+          position: absolute;
+          left: 25px;
+          top: 24px;
+          margin: 0;
+        }
+      }
+      @media (max-width: 760px) {
+        .shell {
+          padding: 20px 16px 60px;
+        }
+        .topline {
+          display: block;
+        }
+        .topline .right {
+          margin-top: 10px;
+          text-align: left;
+        }
+        .hero {
+          padding-top: 38px;
+          gap: 24px;
+        }
+        .hero-art {
+          min-height: 220px;
+        }
+        .grid-2,
+        .grid-3,
+        .gates,
+        .verdict {
+          grid-template-columns: 1fr;
+        }
+        .verdict-side {
+          border-left: 0;
+          border-top: 1px solid rgba(183, 227, 110, 0.35);
+        }
+        .audit-row {
+          grid-template-columns: 1fr;
+        }
+        .audit-row > div {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+        .audit-row > div:last-child {
+          border-bottom: 0;
+        }
+        .audit-head {
+          display: none;
+        }
+        .conflict-list {
+          grid-template-columns: 1fr 1fr;
+        }
+        .section {
+          margin-top: 58px;
+        }
+        .footer {
+          display: block;
+        }
+        .footer span {
+          display: block;
+          margin-top: 8px;
+        }
+      }
+      @media (max-width: 440px) {
+        .conflict-list {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+      @media print {
+        :root {
+          --ink: #fff;
+          --ink-2: #fff;
+          --panel: #fff;
+          --panel-2: #f1f3f2;
+          --line: #b7c1c2;
+          --white: #111;
+          --muted: #4e6064;
+        }
+        body {
+          background: #fff;
+          color: #111;
+        }
+        .shell {
+          max-width: none;
+          padding: 18px;
+        }
+        .hero-art,
+        .scope-visual,
+        .conflict-wrap,
+        .card,
+        .audit,
+        .plan,
+        .gate,
+        details {
+          break-inside: avoid;
+        }
+        .section {
+          margin-top: 38px;
+        }
+        .hero {
+          padding-top: 25px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <div class="topline">
+        <div class="eyebrow">Syke / Branch Merge Review v2</div>
+        <div class="right">READ-ONLY REVIEW · COMMON BASE d74aa6d</div>
+      </div>
+
+      <header class="hero" id="top">
+        <div>
+          <div class="eyebrow">Two features. One integration decision.</div>
+          <h1>
+            Keep the riverbeds.<br /><span style="color: var(--cyan)"
+              >Join them safely.</span
+            >
+          </h1>
+          <p class="hero-lead">
+            這不是把兩個小 patch 疊在一起：Pi 分支同時改
+            runtime、auth、sandbox、workspace 與文件；OpenCode 分支同時改
+            LLM-first adapter、schema 邊界與測試契約。最小方案是先在隔離的
+            integration branch 合併，再把非核心 noise 拆掉。
+          </p>
+          <div class="hero-stamp">
+            RECOMMENDATION · INTEGRATE IN A TEMPORARY WORKTREE
+          </div>
+        </div>
+        <div class="hero-art" aria-label="兩個分支匯入整合分支的圖表">
+          <svg
+            viewBox="0 0 760 390"
+            role="img"
+            aria-labelledby="hero-title hero-desc"
+          >
+            <title id="hero-title">
+              OpenCode 與 Pi 分支匯入 integration branch
+            </title>
+            <desc id="hero-desc">
+              左側 OpenCode v2 與右側 Pi session/GPT-5.6
+              兩條色帶，在中間經過衝突區後匯入測試分支。
+            </desc>
+            <rect width="760" height="390" fill="#111923" />
+            <path
+              d="M0 90H760M0 195H760M0 300H760"
+              stroke="#283a49"
+              stroke-width="1"
+            />
+            <path
+              d="M0 45H760M0 345H760"
+              stroke="#21313e"
+              stroke-width="1"
+              stroke-dasharray="3 8"
+            />
+            <text
+              x="28"
+              y="76"
+              fill="#8fa2b3"
+              font-size="10"
+              font-family="monospace"
+              letter-spacing="2"
+            >
+              CURRENT
+            </text>
+            <text
+              x="28"
+              y="181"
+              fill="#8fa2b3"
+              font-size="10"
+              font-family="monospace"
+              letter-spacing="2"
+            >
+              PI FEATURE
+            </text>
+            <text
+              x="28"
+              y="286"
+              fill="#8fa2b3"
+              font-size="10"
+              font-family="monospace"
+              letter-spacing="2"
+            >
+              RESULT
+            </text>
+            <path
+              d="M22 112 C160 112 185 112 285 112 C360 112 355 195 438 195 C510 195 522 195 590 195 C645 195 664 195 738 195"
+              fill="none"
+              stroke="#82a9ff"
+              stroke-width="13"
+              stroke-linecap="round"
+            />
+            <path
+              d="M22 217 C160 217 195 217 286 217 C360 217 365 195 438 195 C510 195 520 195 590 195 C645 195 664 195 738 195"
+              fill="none"
+              stroke="#c8a8ff"
+              stroke-width="13"
+              stroke-linecap="round"
+            />
+            <path
+              d="M22 322 C150 322 186 322 290 322 C368 322 365 195 438 195 C515 195 520 195 590 195 C650 195 668 195 738 195"
+              fill="none"
+              stroke="#b7e36e"
+              stroke-width="13"
+              stroke-linecap="round"
+              opacity=".95"
+            />
+            <circle
+              cx="438"
+              cy="195"
+              r="29"
+              fill="#111923"
+              stroke="#f2bf69"
+              stroke-width="2"
+            />
+            <circle cx="438" cy="195" r="7" fill="#f2bf69" />
+            <text
+              x="438"
+              y="252"
+              fill="#f2bf69"
+              font-size="10"
+              font-family="monospace"
+              text-anchor="middle"
+            >
+              5 CONFLICTS
+            </text>
+            <rect
+              x="48"
+              y="126"
+              width="172"
+              height="35"
+              fill="#182536"
+              stroke="#82a9ff"
+            />
+            <text
+              x="61"
+              y="148"
+              fill="#eef5f4"
+              font-size="12"
+              font-family="monospace"
+            >
+              OpenCode 2.0
+            </text>
+            <rect
+              x="48"
+              y="231"
+              width="215"
+              height="35"
+              fill="#211d35"
+              stroke="#c8a8ff"
+            />
+            <text
+              x="61"
+              y="253"
+              fill="#eef5f4"
+              font-size="12"
+              font-family="monospace"
+            >
+              Pi + GPT-5.6
+            </text>
+            <rect
+              x="555"
+              y="126"
+              width="160"
+              height="35"
+              fill="#1b2a20"
+              stroke="#b7e36e"
+            />
+            <text
+              x="635"
+              y="148"
+              fill="#eef5f4"
+              font-size="12"
+              font-family="monospace"
+              text-anchor="middle"
+            >
+              tested build
+            </text>
+            <text
+              x="28"
+              y="370"
+              fill="#8fa2b3"
+              font-size="10"
+              font-family="monospace"
+            >
+              WORKTREE FIRST · MERGE SECOND · RUN TESTS LAST
+            </text>
+          </svg>
+        </div>
+      </header>
+
+      <section class="section" id="verdict">
+        <div class="section-head">
+          <h2>01 / Decision at a glance</h2>
+          <div class="section-index">WHAT TO DO NOW</div>
+        </div>
+        <div class="verdict">
+          <div class="verdict-main">
+            <h3>
+              Yes to integration testing.<br />No to a direct dirty merge.
+            </h3>
+            <p>
+              先保留目前 OpenCode v2 working tree，再在 temporary
+              branch/worktree 上合併
+              <code>feat/pi-session-ingestion</code
+              >。這能同時驗證兩個功能，又不會把未完成的 conflict resolution
+              污染正式分支。
+            </p>
+          </div>
+          <div class="verdict-side">
+            <div><span>OpenCode scope</span><span>v2 SQLite + JSON1</span></div>
+            <div><span>Pi scope</span><span>session JSONL + GPT-5.6</span></div>
+            <div><span>Current WIP</span><span>4 files · unstaged</span></div>
+            <div>
+              <span>Merge dry-run</span><span>5 content conflicts</span>
+            </div>
+            <div>
+              <span>Final gate</span><span>full tests + real sync</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="branches">
+        <div class="section-head">
+          <h2>02 / What each branch owns</h2>
+          <div class="section-index">DO NOT CONFUSE THE CENTERS</div>
+        </div>
+        <p class="lede">
+          把每個分支想成一個有明確責任的模組。中間有些 shared
+          wiring，不代表需求混亂，而是兩種 source 都必須穿過同一個 Pi-first
+          runtime。
+        </p>
+        <div class="grid-2">
+          <article class="card scope-card opencode">
+            <span class="tag core">CURRENT · d4923e9</span>
+            <h3>OpenCode 2.0 support</h3>
+            <p>
+              核心是讓 LLM-first adapter 正確讀取 v2 live SQLite，而不是新增
+              Python parser。
+            </p>
+            <ul>
+              <li>
+                <strong>Discovery:</strong> <code>opencode*.db</code>，排除
+                WAL/SHM
+              </li>
+              <li>
+                <strong>Schema:</strong> <code>session_v2</code> /
+                <code>session_message</code>
+              </li>
+              <li>
+                <strong>Payload:</strong>
+                <code>content[]</code>、<code>state.content[]</code>、error
+                message
+              </li>
+              <li>
+                <strong>Safety:</strong>
+                read-only、parameterized、bounded、privacy allowlist
+              </li>
+            </ul>
+          </article>
+          <article class="card scope-card pi">
+            <span class="tag core">PI · 119ee6d</span>
+            <h3>Pi history + GPT-5.6 runtime</h3>
+            <p>
+              核心是把外部 Pi session 當成可選 source，並讓 managed Pi runtime
+              理解 GPT-5.6 與 <code>max</code> thinking。
+            </p>
+            <ul>
+              <li>
+                <strong>Ingestion:</strong>
+                <code>~/.pi/agent/sessions/**/*.jsonl</code>
+              </li>
+              <li>
+                <strong>Runtime:</strong>
+                <code>@earendil-works/pi-coding-agent@0.84.1</code>
+              </li>
+              <li>
+                <strong>Compatibility:</strong> Node.js <code>22.19+</code>
+              </li>
+              <li>
+                <strong>Model:</strong> GPT-5.6 aliases and
+                <code>:max</code> suffix
+              </li>
+            </ul>
+          </article>
+        </div>
+        <div
+          class="scope-visual"
+          style="margin-top: 16px"
+          aria-label="兩個分支的責任邊界圖"
+        >
+          <svg viewBox="0 0 1200 270" role="img">
+            <rect width="1200" height="270" fill="#151f2b" />
+            <text
+              x="44"
+              y="40"
+              fill="#8fa2b3"
+              font-size="11"
+              font-family="monospace"
+              letter-spacing="2"
+            >
+              SHARED RUNTIME CONTRACT
+            </text>
+            <text
+              x="44"
+              y="83"
+              fill="#eef5f4"
+              font-size="18"
+              font-family="Georgia"
+            >
+              source selection → workspace → Pi prompt → MEMEX
+            </text>
+            <path d="M80 154H1120" stroke="#314354" stroke-width="2" />
+            <circle
+              cx="220"
+              cy="154"
+              r="17"
+              fill="#182536"
+              stroke="#82a9ff"
+              stroke-width="3"
+            />
+            <circle
+              cx="480"
+              cy="154"
+              r="17"
+              fill="#211d35"
+              stroke="#c8a8ff"
+              stroke-width="3"
+            />
+            <circle
+              cx="720"
+              cy="154"
+              r="17"
+              fill="#17251d"
+              stroke="#b7e36e"
+              stroke-width="3"
+            />
+            <circle
+              cx="980"
+              cy="154"
+              r="17"
+              fill="#211d14"
+              stroke="#f2bf69"
+              stroke-width="3"
+            />
+            <text
+              x="220"
+              y="202"
+              text-anchor="middle"
+              fill="#c5d3d8"
+              font-size="12"
+              font-family="monospace"
+            >
+              catalog
+            </text>
+            <text
+              x="480"
+              y="202"
+              text-anchor="middle"
+              fill="#c5d3d8"
+              font-size="12"
+              font-family="monospace"
+            >
+              adapter guide
+            </text>
+            <text
+              x="720"
+              y="202"
+              text-anchor="middle"
+              fill="#c5d3d8"
+              font-size="12"
+              font-family="monospace"
+            >
+              Pi runtime
+            </text>
+            <text
+              x="980"
+              y="202"
+              text-anchor="middle"
+              fill="#c5d3d8"
+              font-size="12"
+              font-family="monospace"
+            >
+              memory
+            </text>
+            <path
+              d="M220 137V98M480 137V98"
+              stroke="#82a9ff"
+              stroke-width="2"
+            />
+            <text
+              x="220"
+              y="92"
+              text-anchor="middle"
+              fill="#82a9ff"
+              font-size="11"
+              font-family="monospace"
+            >
+              OpenCode
+            </text>
+            <text
+              x="480"
+              y="92"
+              text-anchor="middle"
+              fill="#82a9ff"
+              font-size="11"
+              font-family="monospace"
+            >
+              OpenCode
+            </text>
+            <path
+              d="M220 171V235M720 171V235"
+              stroke="#c8a8ff"
+              stroke-width="2"
+            />
+            <text
+              x="220"
+              y="253"
+              text-anchor="middle"
+              fill="#c8a8ff"
+              font-size="11"
+              font-family="monospace"
+            >
+              Pi source
+            </text>
+            <text
+              x="720"
+              y="253"
+              text-anchor="middle"
+              fill="#c8a8ff"
+              font-size="11"
+              font-family="monospace"
+            >
+              GPT-5.6
+            </text>
+          </svg>
+        </div>
+      </section>
+
+      <section class="section" id="audit">
+        <div class="section-head">
+          <h2>03 / Scope audit</h2>
+          <div class="section-index">CORE · SUPPORT · TRIM</div>
+        </div>
+        <p class="lede">
+          品質標準是「只保留服務核心需求的最小可行變動」。支援項目可以留下，但要有清楚理由；格式噪音與泛化修補不要跟
+          feature 綁死。
+        </p>
+        <div class="audit">
+          <div class="audit-row audit-head">
+            <div>Surface</div>
+            <div>判定</div>
+            <div>理由</div>
+          </div>
+          <div class="audit-row">
+            <div class="audit-file">
+              catalog.py<br />adapter-opencode.md<br />test_observe_opencode.py
+            </div>
+            <div class="audit-status core">CORE / KEEP</div>
+            <div class="audit-purpose">
+              OpenCode v2 的 discovery、schema branch、JSON1 field extraction 與
+              regression contract。沒有它就沒有 v2 support。
+            </div>
+          </div>
+          <div class="audit-row">
+            <div class="audit-file">
+              bootstrap.py<br />setup_support.py<br />doctor.py
+            </div>
+            <div class="audit-status support">SUPPORT / KEEP</div>
+            <div class="audit-purpose">
+              讓新 seed 能送達使用者、舊 seed 能升級、自訂 adapter
+              不被覆蓋，並能在 setup/doctor 顯示 repair hint。
+            </div>
+          </div>
+          <div class="audit-row">
+            <div class="audit-file">
+              Pi client / env / auth<br />config_file.py<br />pi_settings.py
+            </div>
+            <div class="audit-status core">CORE / KEEP</div>
+            <div class="audit-purpose">
+              GPT-5.6、Pi 0.84.1、Node gate、model catalog 與
+              <code>max</code> readiness 的必要 runtime surface。
+            </div>
+          </div>
+          <div class="audit-row">
+            <div class="audit-file">
+              catalog.py<br />adapter-pi.md<br />sandbox.py<br />workspace.py
+            </div>
+            <div class="audit-status core">CORE / KEEP</div>
+            <div class="audit-purpose">
+              Pi session ingestion 要能被發現、被 prompt 看見，且不能把 Syke
+              自己的 session/credentials 重新 ingest。
+            </div>
+          </div>
+          <div class="audit-row">
+            <div class="audit-file">pi_synthesis.py<br />pi_runtime.py</div>
+            <div class="audit-status support">SUPPORT / REVIEW</div>
+            <div class="audit-purpose">
+              新 Pi 結果 shape 與 selected-source workspace wiring
+              合理；但其中泛化 safe-int、Windows typing 等可拆到獨立 hardening
+              commit。
+            </div>
+          </div>
+          <div class="audit-row">
+            <div class="audit-file">
+              legacy reconstruction<br />mixed-schema merge<br />legacy hash
+              migration
+            </div>
+            <div class="audit-status support">COMPAT / DECIDE</div>
+            <div class="audit-purpose">
+              不是新增 v2 的核心，但實際 OpenCode DB 可同時存在 legacy 與
+              v2；若不想破壞既有使用者，應保留並另標成 compatibility contract。
+            </div>
+          </div>
+          <div class="audit-row">
+            <div class="audit-file">
+              README / CHANGELOG / tables<br />SKILL formatting<br />pyright-only
+              test edits
+            </div>
+            <div class="audit-status trim">TRIM / SPLIT</div>
+            <div class="audit-purpose">
+              內容中與新 source/runtime
+              直接相關的句子可留；大量空白、引號、表格對齊與 typing noise
+              不應擴大 merge surface。
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="findings">
+        <div class="section-head">
+          <h2>04 / Findings before merge</h2>
+          <div class="section-index">REAL ISSUES, NOT THEORETICAL NOISE</div>
+        </div>
+        <div class="grid-2">
+          <article class="card" style="border-top: 3px solid var(--coral)">
+            <span class="tag block">P1 · FIX</span>
+            <h3>v2 fork lineage is documented but not selected</h3>
+            <p>
+              <code>adapter-opencode.md</code> 說要保留
+              <code>parent_id</code
+              >、<code>fork_session_id</code>、<code>fork_boundary</code>，但
+              v2/mixed metadata SQL 只選 title、time、agent、model。照 guide
+              執行會遺失 subagent/fork context。
+            </p>
+            <div class="callout">
+              <strong>最小修正：</strong> v2 projection 加入三個 fork
+              欄位；mixed CTE 的 legacy branch 用
+              <code>NULL</code> 對齊欄位，測試 metadata query 的實際輸出。
+            </div>
+          </article>
+          <article class="card" style="border-top: 3px solid var(--amber)">
+            <span class="tag trim">DECISION · LEGACY</span>
+            <h3>Legacy recency policy contradicts itself</h3>
+            <p>
+              文件指出 legacy <code>time_updated</code> migration 後不再前進，但
+              legacy-only query 仍只按它排序；mixed CTE 也不會從 message/part
+              取得新的 activity。這不是 v2 parser bug，而是 compatibility policy
+              的缺口。
+            </p>
+            <div class="callout">
+              <strong>選項：</strong> 若保留 legacy（建議，因 live DB
+              實際混存），加入 message/part recency；若只要 v2，則明確移除
+              legacy reconstruction，不要半保留。
+            </div>
+          </article>
+        </div>
+        <div class="grid-3" style="margin-top: 16px">
+          <article class="card">
+            <span class="tag trim">P2 · TEST</span>
+            <h3>Reference helper reads until EOF</h3>
+            <p>
+              測試 helper 用 <code>while True</code> 讀完整頁，與 seed 宣稱的
+              bounded budget 不完全一致。這是測試品質問題，不是 production
+              runtime regression；可用固定 page budget 簡化。
+            </p>
+          </article>
+          <article class="card">
+            <span class="tag trim">NO BLOCK</span>
+            <h3>Pi modelRegistry alert is stale</h3>
+            <p>
+              曾有人指出 benchmark runtime 還用
+              <code>modelRegistry</code>；直接讀取 Pi branch source 後確認
+              <code>119ee6d</code> 已使用
+              <code>services.modelRuntime.getModel(...)</code
+              >，對應測試也已改正。
+            </p>
+          </article>
+          <article class="card">
+            <span class="tag trim">SPLIT</span>
+            <h3>Generic hardening is not feature scope</h3>
+            <p>
+              Pi <code>pi_synthesis.py</code> 的 safe integer
+              conversion、Windows pyright 註記與大段 Markdown reformat
+              沒有直接服務兩項核心需求，保留理由應寫在獨立 commit。
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="conflicts">
+        <div class="section-head">
+          <h2>05 / Where merge conflicts come from</h2>
+          <div class="section-index">5 TEXT CONFLICTS + SEMANTIC OVERLAP</div>
+        </div>
+        <p class="lede">
+          衝突大多不是兩邊修改同一個演算法，而是兩邊都更新了同一份說明／setup
+          surface；真正需要設計判斷的是 centralized discovery 與 OpenCode/Pi
+          source wiring。
+        </p>
+        <div class="conflict-wrap">
+          <svg
+            viewBox="0 0 1200 300"
+            role="img"
+            aria-label="五個內容衝突由兩個分支匯入合併策略"
+          >
+            <rect width="1200" height="300" fill="#0e161f" />
+            <path
+              d="M150 70 C420 70 420 150 600 150 C780 150 780 70 1050 70"
+              fill="none"
+              stroke="#82a9ff"
+              stroke-width="7"
+            />
+            <path
+              d="M150 230 C420 230 420 150 600 150 C780 150 780 230 1050 230"
+              fill="none"
+              stroke="#c8a8ff"
+              stroke-width="7"
+            />
+            <circle
+              cx="600"
+              cy="150"
+              r="35"
+              fill="#211d14"
+              stroke="#f2bf69"
+              stroke-width="3"
+            />
+            <text
+              x="600"
+              y="147"
+              fill="#f2bf69"
+              font-family="monospace"
+              font-size="11"
+              text-anchor="middle"
+            >
+              MERGE
+            </text>
+            <text
+              x="600"
+              y="163"
+              fill="#f2bf69"
+              font-family="monospace"
+              font-size="11"
+              text-anchor="middle"
+            >
+              POLICY
+            </text>
+            <text
+              x="126"
+              y="45"
+              fill="#82a9ff"
+              font-family="monospace"
+              font-size="12"
+              text-anchor="middle"
+            >
+              OpenCode
+            </text>
+            <text
+              x="126"
+              y="270"
+              fill="#c8a8ff"
+              font-family="monospace"
+              font-size="12"
+              text-anchor="middle"
+            >
+              Pi
+            </text>
+            <text
+              x="1074"
+              y="45"
+              fill="#b7e36e"
+              font-family="monospace"
+              font-size="12"
+              text-anchor="middle"
+            >
+              KEEP BOTH
+            </text>
+            <text
+              x="1074"
+              y="270"
+              fill="#b7e36e"
+              font-family="monospace"
+              font-size="12"
+              text-anchor="middle"
+            >
+              TEST FIRST
+            </text>
+            <g fill="#151f2b" stroke="#f08b82" stroke-width="2">
+              <rect x="250" y="91" width="105" height="34" />
+              <rect x="392" y="91" width="105" height="34" />
+              <rect x="703" y="91" width="105" height="34" />
+              <rect x="845" y="91" width="105" height="34" />
+              <rect x="520" y="238" width="160" height="34" />
+            </g>
+            <g
+              fill="#eef5f4"
+              font-family="monospace"
+              font-size="10"
+              text-anchor="middle"
+            >
+              <text x="302" y="113">README</text>
+              <text x="444" y="113">CHANGELOG</text>
+              <text x="755" y="113">PLATFORMS</text>
+              <text x="897" y="113">CONFIG DOC</text>
+              <text x="600" y="260">setup_support.py</text>
+            </g>
+            <text
+              x="600"
+              y="35"
+              fill="#8fa2b3"
+              font-family="monospace"
+              font-size="10"
+              text-anchor="middle"
+              letter-spacing="2"
+            >
+              CONTENT CONFLICTS FROM SHARED DOCUMENTATION SURFACES
+            </text>
+          </svg>
+        </div>
+        <div class="conflict-list">
+          <article class="conflict-node">
+            <div class="num">01</div>
+            <h3>CHANGELOG.md</h3>
+            <p>
+              兩邊都新增 release narrative，另有格式重排。只保留兩項 feature
+              的短 entry。
+            </p>
+          </article>
+          <article class="conflict-node">
+            <div class="num">02</div>
+            <h3>README.md</h3>
+            <p>
+              合併 OpenCode read boundary 與 Pi source/runtime 說明，丟掉
+              whitespace-only hunks。
+            </p>
+          </article>
+          <article class="conflict-node">
+            <div class="num">03</div>
+            <h3>PLATFORMS.md</h3>
+            <p>OpenCode 與 Pi 都應列為 Active；不要用一方整檔覆蓋另一方。</p>
+          </article>
+          <article class="conflict-node">
+            <div class="num">04</div>
+            <h3>CONFIG_REFERENCE.md</h3>
+            <p>
+              保留 OpenCode adapter boundary 與 Pi
+              <code>thinking_level=max</code>，回退 table alignment noise。
+            </p>
+          </article>
+          <article class="conflict-node">
+            <div class="num">05</div>
+            <h3>setup_support.py</h3>
+            <p>
+              Pi 的 centralized discovery 必須與 OpenCode adapter repair hints
+              合併，不能選 ours/theirs。
+            </p>
+          </article>
+        </div>
+        <div class="rule"></div>
+        <div class="grid-2">
+          <div class="card">
+            <span class="tag core">SEMANTIC OVERLAP</span>
+            <h3><code>syke/observe/catalog.py</code></h3>
+            <p>
+              文字 merge 可能自動成功，但必須人工確認：保留 Pi source、OpenCode
+              <code>opencode*.db</code> pattern，以及 Pi syke-owned path
+              exclusion。
+            </p>
+          </div>
+          <div class="card">
+            <span class="tag support">UNCOMMITTED OVERLAP</span>
+            <h3><code>tests/test_pi_synthesis_contract.py</code></h3>
+            <p>
+              目前 WIP 新增 OpenCode flow smoke；Pi branch 新增 selected Pi
+              workspace test 與
+              <code>lambda **_kwargs</code>。兩組測試都要保留。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="strategy">
+        <div class="section-head">
+          <h2>06 / Minimum merge strategy</h2>
+          <div class="section-index">PRESERVE · MERGE · PROVE</div>
+        </div>
+        <div class="plan">
+          <article class="step">
+            <div class="circle">1</div>
+            <h3>SAVE WIP</h3>
+            <p>
+              目前 index 空、4 個檔案仍在 working tree。不要在此狀態直接 merge。
+            </p>
+            <code>git diff --binary &gt; /tmp/opencode-v2.patch</code>
+          </article>
+          <article class="step">
+            <div class="circle">2</div>
+            <h3>NEW WORKTREE</h3>
+            <p>
+              從 current HEAD 建立一次性 integration
+              branch，保持正式分支可回復。
+            </p>
+            <code
+              >git worktree add ../opencode-v2-pi-test -b test/opencode-v2-pi
+              HEAD</code
+            >
+          </article>
+          <article class="step">
+            <div class="circle">3</div>
+            <h3>CARRY WIP</h3>
+            <p>
+              在 test branch 套用 patch，做 temporary WIP commit，再合併 Pi
+              feature。
+            </p>
+            <code
+              >git apply /tmp/opencode-v2.patch<br />git merge --no-ff
+              feat/pi-session-ingestion</code
+            >
+          </article>
+          <article class="step">
+            <div class="circle">4</div>
+            <h3>RESOLVE POLICY</h3>
+            <p>
+              文件只合併必要內容；catalog/setup/tests 保留雙方語意；先修 fork
+              lineage。
+            </p>
+            <code>git status<br />git add &lt;resolved-files&gt;</code>
+          </article>
+          <article class="step">
+            <div class="circle">5</div>
+            <h3>PROVE BOTH</h3>
+            <p>
+              先 deterministic suite，再用兩個 source 做一次真正 synthesis。
+            </p>
+            <code
+              >uv run python -m pytest -q<br />uv run syke sync --source
+              opencode --source pi</code
+            >
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="commands">
+        <div class="section-head">
+          <h2>07 / Copyable test recipe</h2>
+          <div class="section-index">NO VERSION MIX-UP</div>
+        </div>
+        <div class="grid-2">
+          <div class="terminal">
+            <pre><span class="comment"># 目前 branch：保留原 working tree，不改它</span>
+<span class="prompt">$</span> cd ~/orca/workspaces/syke/opencode-v2-support
+<span class="prompt">$</span> git diff --binary &gt; /tmp/opencode-v2-support.patch
+<span class="prompt">$</span> git worktree add ../opencode-v2-pi-test \
+    -b test/opencode-v2-pi HEAD
+<span class="prompt">$</span> cd ../opencode-v2-pi-test
+<span class="prompt">$</span> git apply /tmp/opencode-v2-support.patch
+<span class="prompt">$</span> git add syke tests
+<span class="prompt">$</span> git commit -m "test: carry OpenCode v2 WIP"
+<span class="prompt">$</span> git merge --no-ff feat/pi-session-ingestion</pre>
+          </div>
+          <div class="terminal">
+            <pre><span class="comment"># resolved 後：先跑 deterministic checks</span>
+<span class="prompt">$</span> uv run python -m pytest -q
+<span class="prompt">$</span> uv run ruff check .
+
+<span class="comment"># 需要 provider；會寫入 ~/.syke，可能產生費用</span>
+<span class="prompt">$</span> uv run syke setup --agent --skip-daemon \
+    --source opencode --source pi
+<span class="prompt">$</span> uv run syke sync \
+    --source opencode --source pi
+<span class="prompt">$</span> uv run syke status --json</pre>
+          </div>
+        </div>
+        <div class="callout">
+          <strong>版本提醒：</strong>目前直接輸入的全域 <code>syke</code> 是 uv
+          tool，但 metadata 指向 <code>~/Shopify/cli-tool/syke</code>；測試這個
+          integration worktree 時先用 <code>uv run syke</code>。若要測
+          daemon，再從 integration worktree 執行
+          <code>uv run syke install-current --yes</code>。
+        </div>
+      </section>
+
+      <section class="section" id="gates">
+        <div class="section-head">
+          <h2>08 / Merge acceptance gates</h2>
+          <div class="section-index">PASS / FIX / DECIDE</div>
+        </div>
+        <div class="gates">
+          <article class="gate fix">
+            <div class="gate-mark">!</div>
+            <div>
+              <h3>Fork metadata query fixed</h3>
+              <p>
+                v2 metadata result 必須真的包含 parent/fork
+                lineage；不能只在文字說明中承諾。
+              </p>
+            </div>
+          </article>
+          <article class="gate fix">
+            <div class="gate-mark">!</div>
+            <div>
+              <h3>Legacy policy explicit</h3>
+              <p>
+                保留 legacy 就修 recency；移除 legacy 就從 guide/test
+                明確刪除，不留半套分支。
+              </p>
+            </div>
+          </article>
+          <article class="gate ok">
+            <div class="gate-mark">✓</div>
+            <div>
+              <h3>Pi model runtime API verified</h3>
+              <p>
+                Pi branch 使用 <code>modelRuntime.getModel</code>；不要因 stale
+                review note 阻擋整合。
+              </p>
+            </div>
+          </article>
+          <article class="gate ok">
+            <div class="gate-mark">✓</div>
+            <div>
+              <h3>Both source exclusions preserved</h3>
+              <p>
+                Pi adapter 不可讀取 <code>~/.syke/sessions</code> 或
+                <code>~/.syke/pi-agent</code>。
+              </p>
+            </div>
+          </article>
+          <article class="gate note">
+            <div class="gate-mark">~</div>
+            <div>
+              <h3>Formatting noise removed</h3>
+              <p>
+                Markdown table alignment、quote style、空白與 pyright-only edits
+                應拆出 feature diff。
+              </p>
+            </div>
+          </article>
+          <article class="gate note">
+            <div class="gate-mark">~</div>
+            <div>
+              <h3>Real provider smoke remains</h3>
+              <p>
+                Unit suite 通過不等於 LLM-first guide 真正被 Pi 執行；需做一次雙
+                source live sync。
+              </p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="evidence">
+        <div class="section-head">
+          <h2>09 / Evidence drawer</h2>
+          <div class="section-index">OPEN ONLY IF NEEDED</div>
+        </div>
+        <details open>
+          <summary>Repository snapshot used for this review</summary>
+          <div class="detail-body">
+            <ul>
+              <li>
+                Current branch: <code>e2720pjk/opencode-v2-support</code>, HEAD
+                <code>d4923e9</code>, based on <code>d74aa6d</code> through
+                <code>b731d69</code> and <code>d4923e9</code>.
+              </li>
+              <li>
+                Current working tree: <code>git diff --cached</code> empty; 4
+                unstaged files: <code>bootstrap.py</code>,
+                <code>adapter-opencode.md</code>,
+                <code>test_observe_opencode.py</code>,
+                <code>test_pi_synthesis_contract.py</code>; net
+                <code>+799/-53</code>.
+              </li>
+              <li>
+                Pi branch: <code>feat/pi-session-ingestion</code>, commit
+                <code>119ee6d</code>, 37 files, <code>+1186/-357</code>.
+              </li>
+              <li>
+                Committed merge dry-run reports content conflicts in five files:
+                <code>CHANGELOG.md</code>, <code>PLATFORMS.md</code>,
+                <code>README.md</code>, <code>docs/CONFIG_REFERENCE.md</code>,
+                <code>syke/cli_support/setup_support.py</code>.
+              </li>
+            </ul>
+          </div>
+        </details>
+        <details>
+          <summary>
+            Why legacy support is a compatibility decision, not automatic scope
+            creep
+          </summary>
+          <div class="detail-body">
+            <p>
+              OpenCode v2 and legacy tables can coexist in the same live
+              database. The current observed database contains both
+              <code>session_v2/session_message</code> and
+              <code>session/message/part</code>. Therefore mixed-schema reads
+              and stable-ID precedence serve an existing-user migration
+              boundary. They are not required to introduce v2, but deleting them
+              would be a product behavior change. Keep them if backward
+              compatibility is part of the product contract; isolate them in a
+              named compatibility commit if the goal is a strictly minimal v2
+              delta.
+            </p>
+          </div>
+        </details>
+        <details>
+          <summary>What is intentionally not recommended</summary>
+          <div class="detail-body">
+            <ul>
+              <li>
+                Do not run
+                <code>git merge feat/pi-session-ingestion</code> while the
+                current working tree is dirty.
+              </li>
+              <li>
+                Do not resolve <code>setup_support.py</code> or
+                <code>catalog.py</code> with a blanket “ours” or “theirs”; both
+                source contracts must remain.
+              </li>
+              <li>
+                Do not use the current global <code>syke</code> as proof that
+                the worktree code ran; its uv direct URL currently points to
+                another checkout.
+              </li>
+              <li>
+                Do not treat the passing reference parser as a production
+                OpenCode parser; this project intentionally remains LLM-first.
+              </li>
+            </ul>
+          </div>
+        </details>
+      </section>
+
+      <footer class="footer">
+        <strong
+          >Bottom line: merge for integration testing, not for blind
+          adoption.</strong
+        >
+        <span
+          >Standalone artifact · no external assets · no legacy report
+          dependency</span
+        >
+      </footer>
+    </main>
+  </body>
+</html>
