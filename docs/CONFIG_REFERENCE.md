@@ -122,6 +122,18 @@ skills_dirs = [
 
 ---
 
+## Local Evidence Source Paths
+
+Do not add `[paths.sources]` to `config.toml`. Local archive paths and activation
+are managed together through `syke source add/list/remove` and persisted in
+`~/.syke/source_selection.json`. ChatGPTExporter is currently the source that
+supports explicit path registration; native harness roots remain unchanged.
+
+Explicit paths replace that source's defaults, while changing source selection
+preserves registered paths. v1 selection files remain supported; path registration
+uses v2 with `source_paths` and preserves unrestricted (`null`) versus explicitly
+empty (`[]`) selection. See [setup and archive registration](SETUP.md#adding-a-chatgptexporter-archive).
+
 ## Pi Agent State
 
 Provider, model, auth, and endpoint state no longer live in `config.toml`.

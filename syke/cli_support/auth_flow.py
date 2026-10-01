@@ -58,7 +58,9 @@ def term_menu_select_many(
     title: str,
     default_indices: list[int] | None = None,
 ) -> list[int] | None:
-    default_indices = sorted(set(default_indices or list(range(len(entries)))))
+    default_indices = sorted(
+        set(range(len(entries)) if default_indices is None else default_indices)
+    )
 
     if not sys.stdin.isatty():
         for i, entry in enumerate(entries, 1):
