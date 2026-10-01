@@ -25,6 +25,7 @@ def test_oauth_callback_urls_are_not_accepted_as_provider_endpoints() -> None:
 def test_non_tty_source_selection_parses_supported_forms() -> None:
     cases = (
         ("", [2, 0, 2], [0, 2]),
+        ("", [], []),
         ("3, 1, 3, 2", None, [0, 1, 2]),
         ("none", None, []),
     )

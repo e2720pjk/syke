@@ -11,8 +11,8 @@ import click
 from syke.cli_support.daemon_state import daemon_payload
 from syke.cli_support.providers import provider_payload
 from syke.cli_support.render import SetupStatus, console
-from syke.config import user_syke_db_path
-from syke.observe.catalog import active_sources
+from syke.config import DEFAULT_USER, user_syke_db_path
+from syke.observe.catalog import source_inventory
 
 
 def run_setup_stage(label: str, fn):
@@ -21,59 +21,7 @@ def run_setup_stage(label: str, fn):
 
 
 def setup_source_inventory() -> list[dict[str, object]]:
-    from datetime import UTC, datetime
-
-    sources: list[dict[str, object]] = []
-    for desc in active_sources():
-        files_found = 0
-        detected_paths: list[str] = []
-        roots: list[str] = []
-        latest_mtime: float | None = None
-        if desc.discover is not None:
-            for root in desc.discover.roots:
-                base = Path(root.path).expanduser()
-                roots.append(str(base))
-                if not base.exists():
-                    continue
-                patterns = root.include or ["**/*"]
-                for pattern in patterns:
-                    try:
-                        for match in base.glob(pattern):
-                            files_found += 1
-                            try:
-                                mtime = match.stat().st_mtime
-                            except OSError:
-                                mtime = None
-                            if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
-                                latest_mtime = mtime
-                            if len(detected_paths) < 3:
-                                detected_paths.append(str(match))
-                    except OSError:
-                        continue
-
-        sources.append(
-            {
-                "source": desc.source,
-                "format_cluster": desc.format_cluster,
-                "roots": roots,
-                "files_found": files_found,
-                "detected": files_found > 0,
-                "sample_paths": detected_paths,
-                "latest_mtime": latest_mtime,
-                "latest_seen": datetime.fromtimestamp(latest_mtime, UTC).isoformat()
-                if latest_mtime is not None
-                else None,
-            }
-        )
-
-    sources.sort(
-        key=lambda item: (
-            not bool(item["detected"]),
-            -(item["latest_mtime"] or 0.0),
-            cast(str, item["source"]),
-        )
-    )
-    return sources
+    return source_inventory(DEFAULT_USER)
 
 
 def setup_provider_choices() -> list[dict[str, object]]:
@@ -367,13 +315,13 @@ def render_setup_inspect_summary(info: dict[str, object]) -> None:
     console.print(f"\n  {len(setup_targets)} planned write targets")
 
 
-def choose_setup_sources_interactive(sources: list[dict[str, object]]) -> list[str]:
+def choose_setup_sources_interactive(
+    sources: list[dict[str, object]], *, user_id: str = DEFAULT_USER
+) -> list[str]:
     from syke.cli_support.auth_flow import term_menu_select_many
+    from syke.source_selection import register_source_path
 
     detected = [item for item in sources if item.get("detected")]
-    if not detected:
-        return []
-
     entries = []
     for item in detected:
         name = cast(str, item["source"])
@@ -382,12 +330,28 @@ def choose_setup_sources_interactive(sources: list[dict[str, object]]) -> list[s
         unit = "db" if fmt == "sqlite" else "files"
         latest = cast(str | None, item.get("latest_seen"))
         latest_short = latest[:10] if latest else "?"
-        entries.append(f"{name:<16} {files:>6,} {unit:<5}  last used: {latest_short}")
-
+        label = "inventory" if item.get("path_registration") else "last used"
+        entries.append(f"{name:<16} {files:>6,} {unit:<5}  {label}: {latest_short}")
+    entries.append("+ Add a local ChatGPTExporter archive path")
     selected = term_menu_select_many(
         entries,
-        title="\n  Select sources to connect (newest first):\n",
+        title="\n  Select sources to connect:\n",
+        default_indices=list(range(len(detected))),
     )
     if selected is None:
         raise click.Abort()
-    return [cast(str, detected[idx]["source"]) for idx in selected]
+    result = [cast(str, detected[idx]["source"]) for idx in selected if idx < len(detected)]
+    if len(detected) in selected:
+        path = click.prompt("Archive or archive collection path", type=click.Path(path_type=Path))
+        try:
+            info = register_source_path(user_id, "chatgpt-web", path)
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"Registered chatgpt-web: {info['path']} ({info['state']})")
+        for warning in info["warnings"]:
+            click.echo(f"  Warning: {warning}")
+        click.echo("Local snapshot only; runtime permissions are not yet verified.")
+        if "chatgpt-web" not in result:
+            result.append("chatgpt-web")
+        sources[:] = source_inventory(user_id)
+    return result

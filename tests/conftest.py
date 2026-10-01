@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import json
 import logging
 import os
 import shutil
@@ -138,3 +139,87 @@ def isolated_synthesis_paths(isolate_runtime_paths, monkeypatch):
     monkeypatch.setattr(pi_synthesis, "SESSIONS_DIR", workspace.SESSIONS_DIR)
     monkeypatch.setattr(pi_synthesis, "SYKE_DB", workspace.SYKE_DB)
     monkeypatch.setattr(pi_synthesis, "MEMEX_PATH", workspace.MEMEX_PATH)
+
+
+@pytest.fixture
+def chatgpt_archive():
+    """Small Exporter metadata fixture; pointer files are not a Syke projection."""
+
+    def create(path: Path, *, indexed=True, partial=False, empty=False, retained=False) -> Path:
+        path.mkdir(parents=True, exist_ok=True)
+        fingerprint = "fixture-workspace"
+        common = {
+            "schemaVersion": 1,
+            "provider": "chatgpt-web",
+            "workspaceFingerprint": fingerprint,
+        }
+        ids = [] if empty else ["fixture"] + (["retained"] if retained else [])
+        inventory = {
+            **common,
+            "generatedAt": "2026-09-29T12:00:00Z",
+            "complete": not partial,
+            "projects": [],
+            "chains": [{"scope": "main", "complete": not partial}],
+            "conversations": [{"conversationId": item} for item in ids if item != "retained"],
+            "absentConversations": [{"conversationId": item} for item in ("retained", "not-saved")]
+            if retained
+            else [],
+        }
+        (path / "inventory.json").write_text(json.dumps(inventory), encoding="utf-8")
+        rows = []
+        for item in ids:
+            base = path / "conversations" / item
+            (base / "source").mkdir(parents=True)
+            logical_key = f"{fingerprint}/{item}"
+            normalized = {
+                **common,
+                "normalizerVersion": "chatgpt-web-v1",
+                "logicalKey": logical_key,
+                "conversationId": item,
+                "title": item,
+                "createTime": 1,
+                "updateTime": 2,
+                "currentNodeId": None,
+                "rootNodeIds": [],
+                "memberships": [{"scope": "main"}],
+                "nodes": [],
+                "messages": [],
+                "findings": [],
+                "extensions": {"chatgpt": {}},
+            }
+            (base / "conversation.json").write_text(json.dumps(normalized), encoding="utf-8")
+            raw = base / "source" / ("detail-" + "0" * 64 + ".json")
+            raw.write_text('{"mapping": {}, "current_node": null}', encoding="utf-8")
+            rows.append(
+                {
+                    "logicalKey": logical_key,
+                    "conversationId": item,
+                    "title": item,
+                    "createTime": 1,
+                    "updateTime": 2,
+                    "memberships": [{"scope": "main"}],
+                    "normalizedPath": f"conversations/{item}/conversation.json",
+                    "rawPath": str(raw.relative_to(path)),
+                    "assetStatus": "complete",
+                    **({"absentFromCurrentInventory": True} if item == "retained" else {}),
+                }
+            )
+        if indexed:
+            (path / "indexes").mkdir()
+            (path / "indexes/conversations.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+            )
+        if not partial:
+            (path / "archive.json").write_text(
+                json.dumps(
+                    {**common, "normalizerVersion": "unknown" if empty else "chatgpt-web-v1"}
+                ),
+                encoding="utf-8",
+            )
+            (path / "reports").mkdir()
+            (path / "reports/validation.json").write_text(
+                json.dumps({**common, "terminalState": "complete"}), encoding="utf-8"
+            )
+        return path
+
+    return create

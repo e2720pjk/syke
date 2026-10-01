@@ -17,7 +17,12 @@ from syke.memory.learned import (
     measure_learned_projection,
 )
 from syke.memory.memex_budget import measure_memex, strip_memex_header
-from syke.observe.catalog import active_sources, discovered_roots
+from syke.observe.catalog import (
+    active_sources,
+    discovered_roots,
+    effective_discover_roots,
+    probe_source_path,
+)
 from syke.runtime.pi_sessions import find_session_by_id, find_session_by_name, list_sessions
 
 WORKSPACE_SCAN_ENTRY_LIMIT = 10_000
@@ -213,12 +218,34 @@ def _source_inventory_lines(
         adapter_state = (
             "readable" if adapter.is_file() and os.access(adapter, os.R_OK) else "unavailable"
         )
-        roots = discovered_roots(spec, home=home)
         root_parts: list[str] = []
-        for root in roots:
-            path = Path(root).expanduser().resolve()
-            state = "readable" if path.exists() and os.access(path, os.R_OK) else "unavailable"
-            root_parts.append(f"{path} ({state})")
+        if spec.configurable_paths:
+            from syke.source_selection import get_source_paths
+
+            for root in effective_discover_roots(spec):
+                path = (
+                    home / root.path[2:]
+                    if home is not None and root.path.startswith("~/")
+                    else Path(root.path).expanduser()
+                )
+                probe = probe_source_path(spec.source, path, home=home)
+                root_parts.append(
+                    f"{probe['path']} ({probe['state']}; runtime permissions unverified)"
+                )
+                for archive in probe["archives"]:
+                    root_parts.append(
+                        f"supported archive {archive['path']} "
+                        f"(inventory as of {archive['inventory_generated_at'] or 'unknown'})"
+                    )
+            if get_source_paths(spec.source) is not None:
+                root_parts.append(
+                    "configured scope only; do not fall back to adapter default paths"
+                )
+        else:
+            for root in discovered_roots(spec, home=home):
+                path = Path(root).expanduser().resolve()
+                state = "readable" if path.exists() and os.access(path, os.R_OK) else "unavailable"
+                root_parts.append(f"{path} ({state})")
         roots_text = "; ".join(root_parts) if root_parts else "none discovered"
         lines.append(
             f"- {spec.source}: adapter {adapter.resolve()} ({adapter_state}); roots: {roots_text}."
