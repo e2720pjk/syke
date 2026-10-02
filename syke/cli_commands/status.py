@@ -8,6 +8,7 @@ from typing import cast
 
 import click
 
+from syke.cli_commands.source import render_sources
 from syke.cli_support.context import get_db
 from syke.cli_support.daemon_state import daemon_payload
 from syke.cli_support.doctor import build_doctor_payload, render_doctor_payload
@@ -20,6 +21,7 @@ from syke.cli_support.render import (
 )
 from syke.config import user_control_dir
 from syke.control import receipt_rollup
+from syke.observe.catalog import source_inventory
 from syke.onboarding import read_onboarding_state
 from syke.source_selection import get_selected_sources
 
@@ -38,6 +40,7 @@ def build_status_payload(db, *, user_id: str, cli_provider: str | None) -> dict[
         "initialized": memory_count > 0 or cycle_count > 0,
         "selected_sources": list(selected_sources) if selected_sources is not None else None,
         "selection_mode": "all" if selected_sources is None else "explicit",
+        "sources": source_inventory(user_id),
         "onboarding": read_onboarding_state(user_id),
         "provider": provider_payload(cli_provider),
         "daemon": daemon_payload(),
@@ -112,6 +115,9 @@ def status(ctx: click.Context, use_json: bool) -> None:
                 render_setup_line("selection", "none selected")
         else:
             render_setup_line("selection", "all detected sources")
+        configured = [row for row in info["sources"] if row["configured_paths"] is not None]
+        if configured:
+            render_sources(configured)
         onboarding = info.get("onboarding")
         if isinstance(onboarding, dict):
             status_text = str(onboarding.get("status") or "unknown")

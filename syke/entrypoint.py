@@ -16,6 +16,7 @@ from syke.cli_commands.maintenance import cost, install_current, sync
 from syke.cli_commands.pi import pi
 from syke.cli_commands.record import record
 from syke.cli_commands.setup import setup
+from syke.cli_commands.source import source
 from syke.cli_commands.status import connect, doctor, memex, observe, status
 from syke.cli_commands.web import web
 from syke.cli_support.dashboard import show_dashboard
@@ -28,6 +29,7 @@ PRIMARY_COMMANDS = (
     "record",
     "status",
     "sync",
+    "source",
     "auth",
     "doctor",
     "web",
@@ -121,6 +123,7 @@ cli.add_command(ask)
 cli.add_command(record)
 cli.add_command(status)
 cli.add_command(sync)
+cli.add_command(source)
 cli.add_command(auth)
 cli.add_command(memex)
 cli.add_command(observe)

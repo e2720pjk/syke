@@ -162,8 +162,20 @@ native history ingestion, not which terminal agents can install or use Syke:
 - GitHub Copilot
 - Google Antigravity (2.0, CLI, and IDE surfaces)
 - Hermes
+- ChatGPT Web / ChatGPTExporter (saved local archives)
 
-See [PLATFORMS.md](PLATFORMS.md) for exact artifact paths and current status.
+Add an existing ChatGPTExporter archive without rerunning setup:
+
+```bash
+syke source add chatgpt-web ~/Downloads/ChatGPTExport-xxxx
+syke source list chatgpt-web
+```
+
+Registration validates and enables the source; it does not ingest content or
+refresh ChatGPT. Pi reads the existing indexes and full conversation files when
+needed. See [archive registration](docs/SETUP.md#adding-a-chatgptexporter-archive)
+for path, permission, and coverage rules, and [PLATFORMS.md](PLATFORMS.md)
+for exact artifact paths and current status.
 
 ## How Agents Use Syke
 

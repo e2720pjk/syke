@@ -14,6 +14,7 @@ This table describes native history Syke can ingest, not which agents can instal
 | GitHub Copilot | Copilot CLI `~/.copilot/session-state/**/events.jsonl` plus VS Code `chatSessions` files | Active |
 | Google Antigravity | shared-harness transcripts and workflow artifacts under `~/.gemini/antigravity/brain`, `~/.gemini/antigravity-cli/brain`, and `~/.gemini/antigravity-ide/brain`; browser recording metadata for Antigravity 2.0 | Active |
 | Hermes | `~/.hermes/state.db` plus session JSON under `~/.hermes/sessions` | Active |
+| ChatGPT Web / ChatGPTExporter | supplied archives under `~/.syke-chatgpt-web/`: conversation indexes, Markdown, normalized JSON and raw graphs | Active (local archive only) |
 | GitHub | historical/docs reference | Experimental |
 
 Requested but not active yet:
@@ -31,6 +32,6 @@ Syke currently supports only three distribution surfaces:
 
 | Surface | Path | Status |
 |---------|------|--------|
-| CLI | `syke ask`, `syke memex`, `syke record`, `syke doctor`, `syke setup` | Active |
+| CLI | `syke ask`, `syke memex`, `syke record`, `syke doctor`, `syke setup`, `syke source add/list/remove` | Active |
 | MEMEX artifact | exported memex at `~/.syke/workspace/MEMEX.md` | Active |
 | Capability registration | canonical Syke capability package installed to detected skill/capability surfaces, plus native wrappers where needed | Active |

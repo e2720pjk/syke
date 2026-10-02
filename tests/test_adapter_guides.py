@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from syke import config
+from syke.cli_support.setup_support import setup_source_inventory
 from syke.observe.bootstrap import ensure_adapters
-from syke.observe.catalog import active_sources, get_source, iter_discovered_files
+from syke.observe.catalog import active_sources, discovered_roots, get_source, iter_discovered_files
 from syke.observe.seeds import get_seed_adapter_md_path
+from syke.runtime.prompt_context import build_prompt
+from syke.source_selection import set_selected_sources
 
 _MEMORY_MARKER_BY_SOURCE = {
     "antigravity": "`~/.gemini/antigravity/brain/`",
@@ -13,6 +19,7 @@ _MEMORY_MARKER_BY_SOURCE = {
     "copilot": "No separate local durable memory surface is confirmed.",
     "cursor": "`aicontext.personalContext`",
     "hermes": "`memories/MEMORY.md`",
+    "chatgpt-web": "`source/account/memories.json`",
     "opencode": "No separate harness-owned durable memory surface is present",
     "pi": "No separate harness-owned durable memory surface is present",
 }
@@ -122,3 +129,106 @@ def test_seed_adapters_separate_project_instructions_from_harness_memory() -> No
 
         assert project_start < memory_start < distribution_start
         assert _MEMORY_MARKER_BY_SOURCE[spec.source] in content[memory_start:distribution_start]
+
+
+def test_chatgpt_guide_covers_native_graph_and_archive_boundaries() -> None:
+    seed = get_seed_adapter_md_path("chatgpt-web")
+    assert seed is not None
+    content = seed.read_text(encoding="utf-8")
+    for marker in (
+        "raw-complete.json.detailPath",
+        "nodes[].parentId",
+        "messages[].nodeId",
+        "their values may be equal",
+        "Copy identifiers verbatim",
+        "Independent cross-source evidence",
+        "messages[].selected",
+        "GRAPH_*",
+        "Alternative branches",
+        "parts[].raw",
+        "extensions.chatgpt.author.role",
+        "artifacts-complete.json",
+        "inventory.json.absentConversations",
+        "absentFromCurrentInventory",
+        "extraRetainedConversationCount",
+        "not a live complete ChatGPT account",
+    ):
+        assert marker in content
+
+
+@pytest.mark.parametrize("archive_dir", ["", "ChatGPTExport-fixture"])
+@pytest.mark.parametrize("has_index", [False, True])
+def test_chatgpt_discovers_supplied_archives_with_or_without_indexes(
+    tmp_path: Path, monkeypatch, chatgpt_archive, archive_dir: str, has_index: bool
+) -> None:
+    home = tmp_path / "home"
+    archive = chatgpt_archive(home / ".syke-chatgpt-web" / archive_dir, indexed=has_index)
+    conversation = archive / "conversations" / "fixture" / "conversation.json"
+    conversation.with_suffix(".json.part").write_text("{}", encoding="utf-8")
+    outside = home / "Downloads" / "ChatGPTExport-unselected" / "indexes"
+    outside.mkdir(parents=True)
+    (outside / "conversations.jsonl").write_text("{}\n", encoding="utf-8")
+    expected = [conversation.resolve()]
+    if has_index:
+        index = archive / "indexes" / "conversations.jsonl"
+        expected.append(index.resolve())
+    monkeypatch.setenv("HOME", str(home))
+    spec = get_source("chatgpt-web")
+
+    assert spec is not None
+    assert iter_discovered_files(spec, home=home) == sorted(expected)
+    assert discovered_roots(spec, home=home) == [(home / ".syke-chatgpt-web").resolve()]
+    row = next(row for row in setup_source_inventory() if row["source"] == "chatgpt-web")
+    assert row["detected"] is True
+    assert row["files_found"] == len(expected)
+
+
+@pytest.mark.parametrize("context", ["ask", "synthesis"])
+def test_chatgpt_uses_existing_selection_and_prompt_routes(
+    tmp_path: Path, monkeypatch, chatgpt_archive, db, user_id: str, context: str
+) -> None:
+    home = tmp_path / "home"
+    # A supplied archive can be linked into the conventional discovery root.
+    archive = chatgpt_archive(home / "supplied-archive")
+    home.mkdir(exist_ok=True)
+    (home / ".syke-chatgpt-web").symlink_to(archive, target_is_directory=True)
+    pi = home / ".pi" / "agent" / "sessions" / "project" / "session.jsonl"
+    pi.parent.mkdir(parents=True)
+    pi.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(config, "SYKE_HOME", tmp_path / "syke")
+    selected = set_selected_sources(user_id, ["chatgpt-web", "pi"])
+    workspace = tmp_path / "workspace"
+    ensure_adapters(workspace, selected_sources=selected)
+    changes_before = db.conn.total_changes
+
+    prompt = build_prompt(
+        workspace,
+        db=db,
+        user_id=user_id,
+        context=context,
+        now="2026-09-30T00:00:00Z",
+        selected_sources=selected,
+    )
+
+    assert "- chatgpt-web:" in prompt
+    assert "- pi:" in prompt
+    assert "- codex:" not in prompt
+    assert str(archive.resolve()) in prompt
+    assert str(workspace / "adapters" / "chatgpt-web.md") in prompt
+    seed = get_seed_adapter_md_path("chatgpt-web")
+    assert seed is not None
+    assert (workspace / "adapters" / "chatgpt-web.md").read_text() == seed.read_text()
+    assert db.conn.total_changes == changes_before
+
+    selected = set_selected_sources(user_id, ["pi"])
+    prompt = build_prompt(
+        workspace,
+        db=db,
+        user_id=user_id,
+        context=context,
+        now="2026-09-30T00:00:00Z",
+        selected_sources=selected,
+    )
+    assert "- chatgpt-web:" not in prompt
+    assert "- pi:" in prompt

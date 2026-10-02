@@ -463,10 +463,13 @@ def setup(
                 f"Requested source(s) not detected during setup: {', '.join(unknown)}"
             )
         selected_sources = requested
-    elif not yes and detected_sources:
-        selected_sources = choose_setup_sources_interactive(
-            cast(list[dict[str, object]], inspect_info.get("sources") or [])
-        )
+    elif not yes:
+        source_items = cast(list[dict[str, object]], inspect_info.get("sources") or [])
+        selected_sources = choose_setup_sources_interactive(source_items, user_id=user_id)
+        inspect_info["sources"] = source_items
+        detected_sources = [
+            cast(str, item["source"]) for item in source_items if item.get("detected")
+        ]
     persist_selected_sources = bool(detected_sources or selected_sources_cli)
 
     render_section("Sources")

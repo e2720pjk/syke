@@ -257,7 +257,7 @@ daemon-safe provider is the persisted Pi state written by `syke setup`,
 
 Source selection is persisted and reused across setup/sync/daemon flows.
 
-- Interactive `syke setup` prompts for detected sources.
+- Interactive `syke setup` prompts for detected sources and offers an entry to add a local ChatGPTExporter archive.
 - Automation can pass repeated `--source` values to `syke setup`.
 - `syke sync` accepts repeated `--source` values for the same persisted selection flow.
 - Selections are stored at `~/.syke/source_selection.json`.
@@ -269,6 +269,68 @@ Notes:
 
 - During setup, explicit `--source` values must be detected in that run or setup exits with a usage error.
 - The `--source` option is intentionally hidden from `--help` output but is part of the supported setup/sync automation contract.
+
+## Adding a ChatGPTExporter Archive
+
+For an already configured installation:
+
+```bash
+syke source add chatgpt-web ~/Downloads/ChatGPTExport-xxxx
+syke source list chatgpt-web
+syke ask "What did I previously decide about this project?"
+# Optional: synthesize immediately rather than wait for the background service.
+syke sync
+```
+
+On a fresh installation, register the archive first, then run `syke setup`.
+Interactive setup also offers **Add a local ChatGPTExporter archive path** in
+source selection, even when no sources have been detected. Both routes use the
+same recognition and registration logic; registration requires no provider,
+daemon, or LLM call.
+
+The path can be an archive itself (regardless of its directory name), or a
+directory containing `ChatGPTExport-*` archives. Recognition checks Exporter's
+schema/provider/workspace metadata and index evidence pointers. It does not
+re-audit content hashes or fetch ChatGPT. Partial and empty archives are supported
+and labelled accordingly; unsupported children of a collection are reported and
+excluded from discovery.
+
+Registration saves a canonical path, installs the source guide, and enables
+ChatGPT without disabling existing sources. Repeating it with the same path or
+a filesystem alias is idempotent. Add another path to retain multiple archives.
+When explicit paths are configured, they **replace** this source's default
+`~/.syke-chatgpt-web/` roots. A missing, unreadable, or unsupported configured path
+never silently restores defaults. Other sources keep their existing roots.
+
+`syke source list`, `syke status --json`, setup, and Pi self-observation share the
+same source inventory. They distinguish support, recognition, activation,
+filesystem readability, and archive scope/time. Runtime readability is
+`null` / unverified until tested in the actual Pi/background-service context:
+CLI access is not proof of sandbox or macOS privacy permission. Paths must resolve
+inside home; external disks and symlinks escaping home are not supported by the
+current sandbox. Archive dates and audit completeness describe saved scopes,
+not the current ChatGPT account.
+
+```bash
+syke source remove chatgpt-web ~/Downloads/ChatGPTExport-xxxx
+```
+
+Removal unregisters only that path. Removing the last explicit path disables
+ChatGPT and retains an empty path override, so default discovery does not resume.
+It deletes neither archive files nor existing graph/MEMEX content. Register a
+valid path again to re-enable the source.
+
+These commands support `--json` (stdout; logs remain on stderr). Recognition or
+configuration failures return a nonzero exit status without changing selection.
+No registration/removal operation ingests conversations, updates the remote
+account, triggers synthesis, or rewrites memory.
+
+Paths live with selection in `~/.syke/source_selection.json`, not
+`config.toml`. Existing v1 selections remain readable. Registering paths writes
+v2 with `source_paths`; `selected_sources: null` preserves unrestricted selection,
+whereas `[]` still means no selected sources. Setup/sync updates preserve paths.
+Use the CLI rather than editing this state manually. Updated settings are read
+on subsequent Ask/synthesis operations without a source-registration restart.
 
 ## What Setup Writes
 
