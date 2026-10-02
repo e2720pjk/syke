@@ -40,7 +40,7 @@ def test_load_pi_catalog_parses_provider_requirements(monkeypatch, tmp_path: Pat
         encoding="utf-8",
     )
     node.chmod(0o755)
-    monkeypatch.setattr(pi_install, "PI_PACKAGE_ROOT", tmp_path)
+    pi_install._package_path(tmp_path, pi_install.PI_PACKAGE).mkdir(parents=True)
     monkeypatch.setattr(pi_install, "PI_LOCAL_PREFIX", tmp_path)
     monkeypatch.setattr(pi_install, "ensure_node_binary", lambda: node)
 

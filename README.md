@@ -114,6 +114,24 @@ The important split:
 - `syke record` admits an external record; the next synthesis decides whether it changes memory.
 - `syke web --open` shows the local visual timeline.
 
+## Update Your Pi Runtime
+
+Pi updates are a local choice, separate from updating Syke:
+
+```bash
+syke pi status
+syke pi update --check
+syke pi update                     # latest stable, after compatibility checks
+syke pi update --version 1.0.0     # explicitly choose a release
+syke pi rollback                  # previous local release; no download
+```
+
+Syke's tested default is used only when no runtime is installed. Restarting Syke
+or updating Syke does not reset your selected Pi version. Updates are staged and
+checked before activation; a running managed daemon is restarted at the switch.
+Use `--no-restart` if you want to restart it yourself. Provider credentials and
+settings are kept separately and are not replaced by runtime updates.
+
 ## Local Timeline
 
 Syke serves a private local timeline. It is for visualization only. 

@@ -108,9 +108,11 @@ def _build_rpc_launch_command(
     session_dir: Path,
     self_learn_skill_path: Path,
     tool_sandbox_profile: Path | None = None,
+    executable: list[str] | None = None,
+    tool_extension: Path | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     syke_self_path = Path(__file__).parent.parent / "runtime" / "syke_self.md"
-    cmd = [resolve_pi_binary(), "--mode", "rpc"]
+    cmd = [*(executable if executable is not None else [resolve_pi_binary()]), "--mode", "rpc"]
     if provider:
         cmd.extend(["--provider", provider])
     cmd.extend(
@@ -131,7 +133,7 @@ def _build_rpc_launch_command(
     )
     extra_env: dict[str, str] = {}
     if tool_sandbox_profile is not None:
-        extension = _pi_install._install_pi_tool_extension()
+        extension = tool_extension or _pi_install._install_pi_tool_extension()
         cmd.extend(
             [
                 "--no-builtin-tools",

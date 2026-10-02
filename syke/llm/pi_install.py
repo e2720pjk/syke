@@ -6,11 +6,13 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
-import stat
 import subprocess
 import tempfile
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,7 @@ logger = logging.getLogger("syke.llm.pi_client")
 
 PI_PACKAGE = "@earendil-works/pi-coding-agent"
 
+# A tested bootstrap default, not a constraint on the user's installed version.
 PI_PACKAGE_VERSION = "0.87.1"
 
 PI_PACKAGE_SPEC = f"{PI_PACKAGE}@{PI_PACKAGE_VERSION}"
@@ -57,6 +60,135 @@ _NPM_CANDIDATES = [
 _MINIMUM_NODE_VERSION = (22, 19, 0)
 
 _NODE_REQUIREMENT = "Node.js 22.19+ with Zstandard support"
+
+_EXACT_VERSION = re.compile(
+    r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+)
+
+
+def _runtime_state_path() -> Path:
+    return PI_LOCAL_PREFIX.with_name("pi-runtime.json")
+
+
+def _runtime_store_path() -> Path:
+    return PI_LOCAL_PREFIX.with_name("pi-runtimes")
+
+
+def _runtime_prefix_from_name(name: object) -> Path:
+    if name == PI_LOCAL_PREFIX.name:
+        return PI_LOCAL_PREFIX
+    if isinstance(name, str):
+        parts = name.split("/")
+        if (
+            len(parts) == 2
+            and parts[0] == _runtime_store_path().name
+            and re.fullmatch(r"[0-9A-Za-z.+-]+", parts[1])
+            and parts[1] not in {".", ".."}
+        ):
+            return _runtime_store_path() / parts[1]
+    raise RuntimeError(f"Invalid Pi runtime selection in {_runtime_state_path()}")
+
+
+def _read_runtime_state() -> dict[str, Any] | None:
+    path = _runtime_state_path()
+    if not path.exists():
+        return None
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Invalid Pi runtime selection at {path}: {exc}") from exc
+    if (
+        not isinstance(state, dict)
+        or type(state.get("schemaVersion")) is not int
+        or state["schemaVersion"] != 1
+    ):
+        raise RuntimeError(f"Unsupported Pi runtime selection at {path}")
+    _runtime_prefix_from_name(state.get("active"))
+    if state.get("previous") is not None:
+        _runtime_prefix_from_name(state["previous"])
+    return state
+
+
+def active_pi_prefix() -> Path:
+    """Resolve the local choice; without a choice, keep the legacy installation."""
+    state = _read_runtime_state()
+    return _runtime_prefix_from_name(state["active"]) if state else PI_LOCAL_PREFIX
+
+
+def _atomic_write(path: Path, data: bytes, *, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.chmod(mode)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _write_runtime_state(active: Path, previous: Path | None) -> None:
+    parent = PI_LOCAL_PREFIX.parent
+    state = {
+        "schemaVersion": 1,
+        "active": active.relative_to(parent).as_posix(),
+        "previous": previous.relative_to(parent).as_posix() if previous else None,
+    }
+    _runtime_prefix_from_name(state["active"])
+    if state["previous"] is not None:
+        _runtime_prefix_from_name(state["previous"])
+    _atomic_write(_runtime_state_path(), (json.dumps(state, indent=2) + "\n").encode())
+
+
+@contextmanager
+def _runtime_install_lock(*, timeout: float = 10.0, update: bool = False) -> Iterator[None]:
+    """Use a separate update lock so daemon restarts can acquire the launcher lock."""
+    path = PI_LOCAL_PREFIX.with_name("pi-update.lock" if update else "pi-runtime.lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+
+            def acquire() -> None:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+
+            def release() -> None:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            def acquire() -> None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            def release() -> None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                acquire()
+                break
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        "Another Pi runtime operation is in progress; retry later."
+                    ) from exc
+                time.sleep(0.1)
+        try:
+            yield
+        finally:
+            release()
 
 
 def _find_executable(name: str, candidates: list[Path]) -> Path | None:
@@ -186,19 +318,16 @@ def _resolve_npm_binary() -> str:
     return str(npm)
 
 
-def _write_pi_launcher(node_bin: Path) -> Path:
-    """Write the stable Pi launcher Syke uses for shell and daemon paths."""
-    if not PI_CLI_JS.exists():
-        raise RuntimeError(f"Pi CLI entrypoint not found at {PI_CLI_JS}")
-
-    PI_BIN.parent.mkdir(parents=True, exist_ok=True)
-    if PI_BIN.is_symlink():
-        PI_BIN.unlink()
-    elif PI_BIN.exists() and not PI_BIN.is_file():
-        PI_BIN.unlink()
-    launcher = f'#!/bin/sh\nexec "{node_bin}" "{PI_CLI_JS}" "$@"\n'
-    PI_BIN.write_text(launcher, encoding="utf-8")
-    PI_BIN.chmod(PI_BIN.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+def _write_pi_launcher(node_bin: Path, prefix: Path | None = None) -> Path:
+    """Pin each launched process to its runtime, even after a later update."""
+    prefix = prefix if prefix is not None else active_pi_prefix()
+    cli = _package_path(prefix, PI_PACKAGE) / "dist" / "cli.js"
+    if not cli.is_file():
+        raise RuntimeError(f"Pi CLI entrypoint not found at {cli}")
+    launcher = (
+        f'#!/bin/sh\nexec {shlex.quote(str(node_bin))} {shlex.quote(str(cli.resolve()))} "$@"\n'
+    )
+    _atomic_write(PI_BIN, launcher.encode(), mode=0o755)
     return PI_BIN
 
 
@@ -217,26 +346,26 @@ def _read_package_manifest(package_root: Path) -> dict[str, Any]:
     return manifest
 
 
-def _validate_pi_install(prefix: Path) -> None:
+def _validate_pi_install(prefix: Path, *, expected_version: str | None = None) -> None:
+    """Check the local exact pins, not equality with Syke's bootstrap default."""
     root_manifest = _read_package_manifest(prefix)
     dependencies = root_manifest.get("dependencies")
     if not isinstance(dependencies, dict):
         raise RuntimeError(f"Pi runtime dependencies are missing at {prefix / 'package.json'}")
-    expected_dependencies = {
-        PI_PACKAGE: PI_PACKAGE_VERSION,
-        PI_SCHEMA_PACKAGE: PI_SCHEMA_VERSION,
-    }
-    for package, expected_version in expected_dependencies.items():
-        if dependencies.get(package) != expected_version:
+    for package in (PI_PACKAGE, PI_SCHEMA_PACKAGE):
+        pinned = dependencies.get(package)
+        if not isinstance(pinned, str) or _EXACT_VERSION.fullmatch(pinned) is None:
             raise RuntimeError(
-                f"Pi runtime must pin {package} at {expected_version}; "
-                f"found {dependencies.get(package)!r}"
+                f"Pi runtime must pin {package} at an exact version; found {pinned!r}"
             )
-
-        manifest = _read_package_manifest(_package_path(prefix, package))
-        if manifest.get("name") != package or manifest.get("version") != expected_version:
+        if package == PI_PACKAGE and expected_version is not None and pinned != expected_version:
             raise RuntimeError(
-                f"Pi runtime package {package} must be {expected_version}; "
+                f"Pi runtime must pin {package} at {expected_version}; found {pinned!r}"
+            )
+        manifest = _read_package_manifest(_package_path(prefix, package))
+        if manifest.get("name") != package or manifest.get("version") != pinned:
+            raise RuntimeError(
+                f"Pi runtime package {package} must be {pinned}; "
                 f"found {manifest.get('name')!r} {manifest.get('version')!r}"
             )
 
@@ -268,27 +397,23 @@ def _remove_install_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def _install_pi_runtime(node_bin: Path) -> None:
-    installed_version = _installed_pi_version(PI_LOCAL_PREFIX)
-    installed_tuple = _version_tuple(installed_version) if installed_version else None
-    pinned_tuple = _version_tuple(PI_PACKAGE_VERSION)
-    if installed_tuple and pinned_tuple and installed_tuple > pinned_tuple:
-        raise RuntimeError(
-            f"Pi {installed_version} is newer than Syke's tested version {PI_PACKAGE_VERSION}. "
-            "Syke will not replace it with an older version automatically."
-        )
-
+def _install_pi_runtime(
+    node_bin: Path,
+    *,
+    prefix: Path | None = None,
+    version: str | None = None,
+    schema_spec: str | None = None,
+) -> None:
+    """Stage exact local pins before replacing a destination, never the selection."""
+    prefix = prefix if prefix is not None else PI_LOCAL_PREFIX
+    version = version if version is not None else PI_PACKAGE_VERSION
+    schema_spec = schema_spec if schema_spec is not None else PI_SCHEMA_VERSION
+    if _EXACT_VERSION.fullmatch(version) is None:
+        raise RuntimeError(f"Expected an exact Pi version, found {version!r}")
     npm = _resolve_npm_binary()
-    PI_LOCAL_PREFIX.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(
-        tempfile.mkdtemp(
-            prefix=f".{PI_LOCAL_PREFIX.name}.staging-",
-            dir=PI_LOCAL_PREFIX.parent,
-        )
-    )
-    backup = PI_LOCAL_PREFIX.with_name(
-        f".{PI_LOCAL_PREFIX.name}.backup-{os.getpid()}-{time.time_ns()}"
-    )
+    prefix.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{prefix.name}.staging-", dir=prefix.parent))
+    backup = prefix.with_name(f".{prefix.name}.backup-{os.getpid()}-{time.time_ns()}")
     install_env = dict(os.environ)
     install_env["PATH"] = os.pathsep.join(
         part for part in (str(node_bin.parent), install_env.get("PATH", "")) if part
@@ -302,11 +427,13 @@ def _install_pi_runtime(node_bin: Path) -> None:
                 "--prefix",
                 str(staging),
                 "--save-exact",
+                "--package-lock=true",
+                "--engine-strict",
                 "--ignore-scripts",
                 "--no-audit",
                 "--no-fund",
-                PI_PACKAGE_SPEC,
-                PI_SCHEMA_SPEC,
+                f"{PI_PACKAGE}@{version}",
+                f"{PI_SCHEMA_PACKAGE}@{schema_spec}",
             ],
             capture_output=True,
             text=True,
@@ -315,15 +442,15 @@ def _install_pi_runtime(node_bin: Path) -> None:
         )
         if result.returncode != 0:
             raise RuntimeError(f"Failed to install Pi runtime: {result.stderr.strip()[:500]}")
-        _validate_pi_install(staging)
+        _validate_pi_install(staging, expected_version=version)
 
-        if PI_LOCAL_PREFIX.exists() or PI_LOCAL_PREFIX.is_symlink():
-            PI_LOCAL_PREFIX.rename(backup)
+        if prefix.exists() or prefix.is_symlink():
+            prefix.rename(backup)
         try:
-            staging.rename(PI_LOCAL_PREFIX)
+            staging.rename(prefix)
         except Exception:
             if backup.exists() or backup.is_symlink():
-                backup.rename(PI_LOCAL_PREFIX)
+                backup.rename(prefix)
             raise
         _remove_install_path(backup)
     finally:
@@ -331,31 +458,36 @@ def _install_pi_runtime(node_bin: Path) -> None:
 
 
 def ensure_pi_binary() -> str:
-    """Install Pi locally under ~/.syke/ and return a stable launcher path."""
-    node_bin = ensure_node_binary()
-
-    try:
-        _validate_pi_install(PI_LOCAL_PREFIX)
-    except RuntimeError:
-        logger.info("Installing Pi %s to %s", PI_PACKAGE_VERSION, PI_LOCAL_PREFIX)
-        _install_pi_runtime(node_bin)
-        _validate_pi_install(PI_LOCAL_PREFIX)
-
-    if PI_CLI_JS.exists():
-        _write_pi_launcher(node_bin)
+    """Bootstrap only a missing installation; respect every existing local choice."""
+    with _runtime_install_lock():
+        prefix = active_pi_prefix()
+        if not prefix.exists() and not prefix.is_symlink() and _read_runtime_state() is None:
+            node_bin = ensure_node_binary()
+            logger.info("Installing default Pi %s to %s", PI_PACKAGE_VERSION, prefix)
+            _install_pi_runtime(node_bin)
+        else:
+            node_bin = None
+        try:
+            _validate_pi_install(prefix)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"{exc}. Run `syke pi update` to repair it; the local choice was not replaced."
+            ) from exc
+        node_bin = node_bin or ensure_node_binary()
+        _write_pi_launcher(node_bin, prefix)
         return str(PI_BIN)
-    raise RuntimeError(f"Pi CLI entrypoint not found after install at {PI_CLI_JS}")
 
 
-def _install_pi_tool_extension() -> Path:
-    """Install Syke's trusted tool broker beside Pi for package resolution."""
+def _install_pi_tool_extension(prefix: Path | None = None) -> Path:
+    """Install Syke's trusted tool broker beside the selected Pi package."""
     if not PI_TOOL_EXTENSION_SOURCE.is_file():
         raise RuntimeError(f"Syke Pi tool extension not found at {PI_TOOL_EXTENSION_SOURCE}")
-    PI_LOCAL_PREFIX.mkdir(parents=True, exist_ok=True)
+    prefix = prefix if prefix is not None else active_pi_prefix()
+    extension = prefix / PI_TOOL_EXTENSION.name
     source = PI_TOOL_EXTENSION_SOURCE.read_bytes()
-    if not PI_TOOL_EXTENSION.exists() or PI_TOOL_EXTENSION.read_bytes() != source:
-        PI_TOOL_EXTENSION.write_bytes(source)
-    return PI_TOOL_EXTENSION
+    if not extension.exists() or extension.read_bytes() != source:
+        _atomic_write(extension, source, mode=0o644)
+    return extension
 
 
 def resolve_pi_binary() -> str:
@@ -369,8 +501,10 @@ def get_pi_version(*, install: bool = False, minimal_env: bool = False) -> str:
     When ``minimal_env`` is true, simulate a launchd-style cold environment with
     a stripped PATH to catch shell-dependent runtime failures.
     """
+    if install:
+        ensure_pi_binary()
     launcher = PI_BIN
-    _validate_pi_install(PI_LOCAL_PREFIX)
+    _validate_pi_install(active_pi_prefix())
     if not launcher.exists():
         raise FileNotFoundError(f"Pi launcher not found at {launcher}")
 

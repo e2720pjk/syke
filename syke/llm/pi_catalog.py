@@ -132,7 +132,7 @@ def _run_pi_node_script(script: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         timeout=10,
-        cwd=str(_pi_install.PI_LOCAL_PREFIX),
+        cwd=str(_pi_install.active_pi_prefix()),
         env=env,
     )
 
@@ -151,7 +151,7 @@ def _prepare_host_oauth_for_runtime(provider: str | None) -> None:
         capture_output=True,
         text=True,
         timeout=30,
-        cwd=str(_pi_install.PI_LOCAL_PREFIX),
+        cwd=str(_pi_install.active_pi_prefix()),
         env=_build_subprocess_env(build_pi_agent_env(), provider=provider),
     )
     if result.returncode != 0:
@@ -160,7 +160,9 @@ def _prepare_host_oauth_for_runtime(provider: str | None) -> None:
 
 
 def _load_pi_catalog() -> tuple[PiProviderCatalogEntry, ...]:
-    if not _pi_install.PI_PACKAGE_ROOT.exists():
+    if not _pi_install._package_path(
+        _pi_install.active_pi_prefix(), _pi_install.PI_PACKAGE
+    ).exists():
         return ()
 
     script = """
@@ -334,7 +336,7 @@ try {
     result = subprocess.run(
         [str(_pi_install.ensure_node_binary()), "--input-type=module", "-e", script],
         text=True,
-        cwd=str(_pi_install.PI_LOCAL_PREFIX),
+        cwd=str(_pi_install.active_pi_prefix()),
         env=_build_subprocess_env(
             build_pi_agent_env(
                 {
@@ -373,7 +375,7 @@ def probe_pi_provider_connection(
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
-            cwd=str(_pi_install.PI_LOCAL_PREFIX),
+            cwd=str(_pi_install.active_pi_prefix()),
             env=_build_pi_process_env(provider=provider_id),
             check=False,
         )

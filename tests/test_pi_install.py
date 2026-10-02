@@ -83,7 +83,8 @@ from pathlib import Path
 args = sys.argv[1:]
 prefix = Path(args[args.index("--prefix") + 1])
 pi_package = {pi_client.PI_PACKAGE!r}
-pi_version = os.environ.get("FAKE_PI_VERSION", {pi_client.PI_PACKAGE_VERSION!r})
+requested_version = next(arg for arg in args if arg.startswith(pi_package + "@")).rsplit("@", 1)[1]
+pi_version = os.environ.get("FAKE_PI_VERSION", requested_version)
 schema_package = {pi_client.PI_SCHEMA_PACKAGE!r}
 schema_version = {pi_client.PI_SCHEMA_VERSION!r}
 
@@ -140,14 +141,16 @@ def test_pi_install_pipeline_executes_and_replaces_atomically(tmp_path: Path, mo
     monkeypatch.setenv("FAKE_NPM_LOG", str(npm_log))
     monkeypatch.setenv("FAKE_PI_VERSION", "0.0.0")
 
+    node_bin = pi_client.ensure_node_binary()
     with pytest.raises(RuntimeError, match=f"at {pi_client.PI_PACKAGE_VERSION}"):
-        pi_client.ensure_pi_binary()
+        pi_client._install_pi_runtime(node_bin)
 
     assert old_marker.read_text(encoding="utf-8") == "old"
     assert pi_bin.is_symlink()
     assert list(pi_prefix.parent.glob(".pi.staging-*")) == []
 
     monkeypatch.setenv("FAKE_PI_VERSION", pi_client.PI_PACKAGE_VERSION)
+    pi_client._install_pi_runtime(node_bin)
     launcher = Path(pi_client.ensure_pi_binary())
 
     assert launcher == pi_bin
@@ -217,7 +220,9 @@ def test_node_selection_rejects_incomplete_runtimes_and_uses_valid_fallback(
     assert "Zstandard support is unavailable" in detail
 
 
-def test_ensure_pi_binary_refuses_automatic_downgrade(tmp_path: Path, monkeypatch) -> None:
+def test_ensure_pi_binary_preserves_and_uses_a_newer_local_version(
+    tmp_path: Path, monkeypatch
+) -> None:
     pi_prefix, _pi_bin, _pi_node = _patch_pi_install_paths(monkeypatch, tmp_path / "home")
     major, minor, patch = (int(part) for part in pi_client.PI_PACKAGE_VERSION.split("."))
     newer_version = f"{major}.{minor}.{patch + 1}"
@@ -230,5 +235,5 @@ def test_ensure_pi_binary_refuses_automatic_downgrade(tmp_path: Path, monkeypatc
         lambda: (_ for _ in ()).throw(AssertionError("newer Pi must not be replaced")),
     )
 
-    with pytest.raises(RuntimeError, match="will not replace it with an older version"):
-        pi_client.ensure_pi_binary()
+    assert pi_client.ensure_pi_binary() == str(pi_client.PI_BIN)
+    assert pi_client._installed_pi_version(pi_prefix) == newer_version

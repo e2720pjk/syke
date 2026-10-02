@@ -49,6 +49,58 @@ A healthy first run should end with:
 - macOS protected-folder access verified or clearly reported as blocked
 - local timeline available through `syke web`
 
+## Local Pi Runtime Updates
+
+Syke manages a private Pi runtime rather than using whichever `pi` is on your
+shell's PATH. The tested version shipped in Syke is a **first-install default**,
+not a restriction on the version you can select locally.
+
+```bash
+syke pi status --json
+syke pi update --check --json
+syke pi update
+syke pi update --version 1.0.0
+syke pi rollback
+```
+
+- `status` reads local package metadata without installing or launching Pi.
+- `update --check` reads the npm registry without installing Pi or changing your
+  selection. Without `--version`, the target is the latest stable release.
+- `update` installs into a fresh directory with exact local dependency pins and
+  an npm lockfile. The `typebox` dependency is resolved from that Pi release,
+  rather than required to match Syke's first-install default.
+- Before activation, Syke checks the model catalog, tool API, and its actual RPC
+  launch flags. The checks use an isolated home/agent directory, offline model
+  loading, and no user API keys. On macOS with `sandbox-exec` available, they
+  also execute the brokered tools and verify that file and bash operations cannot read a synthetic
+  secret or bypass the file-write restriction.
+- A failed installation or compatibility check leaves the active runtime and
+  daemon alone. A failed selection/launcher write restores the prior selection.
+- An ordinary update does not downgrade a locally newer release. To select an
+  older release or a prerelease, use an explicit `--version`.
+- `rollback` checks and selects the previous local release without contacting
+  the registry. It does not restore or rewrite provider credentials/settings.
+
+The local selection is stored in `~/.syke/pi-runtime.json`. New installations
+are retained under `~/.syke/pi-runtimes/`; the existing `~/.syke/pi` installation
+remains usable as the first rollback target. These files are local state, not
+repository files. Repeated startups and Syke self-updates keep the selected
+version, even if a future Syke release changes its first-install default.
+The stable launcher at `~/.syke/bin/pi` points at the selected runtime's absolute
+entrypoint, so an already-running Pi process stays on its own installed release.
+
+A running managed daemon is stopped only after the candidate passes the checks,
+then restarted after the installation lock is released. Use
+`syke pi update --no-restart` or `syke pi rollback --no-restart` to leave a running
+process alone and restart it yourself. A foreground daemon requires that explicit
+choice or must be stopped first. If restarting the daemon fails after activation,
+inspect `syke pi status` and use `syke daemon start` or `syke pi rollback`.
+
+These checks do not guarantee every future Pi release is compatible. Breaking
+changes to Pi's APIs or state formats may still require a Syke change. Runtime
+updates do not intentionally alter authentication, but a newer Pi process may
+migrate its own state; rolling back binaries cannot undo such a migration.
+
 ## Agent Mode (Non-Interactive)
 
 Any terminal agent can install and operate Syke. Native history ingestion is

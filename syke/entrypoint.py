@@ -13,6 +13,7 @@ from syke.cli_commands.config import config
 from syke.cli_commands.daemon import daemon, self_update
 from syke.cli_commands.internal import macos_filesystem_probe
 from syke.cli_commands.maintenance import cost, install_current, sync
+from syke.cli_commands.pi import pi
 from syke.cli_commands.record import record
 from syke.cli_commands.setup import setup
 from syke.cli_commands.status import connect, doctor, memex, observe, status
@@ -34,6 +35,7 @@ PRIMARY_COMMANDS = (
 
 ADVANCED_COMMANDS = (
     "daemon",
+    "pi",
     "config",
     "connect",
     "cost",
@@ -126,6 +128,7 @@ cli.add_command(doctor)
 cli.add_command(connect)
 cli.add_command(config)
 cli.add_command(daemon)
+cli.add_command(pi)
 cli.add_command(self_update)
 cli.add_command(cost)
 cli.add_command(install_current)
